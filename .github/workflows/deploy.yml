@@ -51,7 +51,8 @@ concurrency:
 jobs:
   deploy:
     runs-on: windows-latest
-    environment: deploy
+    # PR CI: environment 없음. publish/수동 실행: deploy environment (yourgg only)
+    environment: ${{ github.event_name != 'pull_request' && 'deploy' || null }}
     outputs:
       unsigned-artifact-id: ${{ steps.upload-unsigned-artifact.outputs.artifact-id }}
       signed-artifact-id: ${{ steps.upload-signed-artifact.outputs.artifact-id }}

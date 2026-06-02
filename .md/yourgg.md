@@ -49,14 +49,27 @@ git checkout yourgg
 git push -u origin yourgg
 ```
 
-### 1-2. GitHub Environments
+### 1-2. GitHub Environments (yourgg only — 1번)
 
-`your-gg/yourgg-overlay` → Settings → Environments
+`your-gg/yourgg-overlay` → **Settings** → **Environments**
 
-| Environment | 용도 |
-| --- | --- |
-| `deploy` | 빌드 + Azure 서명 |
-| `publish` | npm publish + GitHub Release |
+`deploy`, `publish` 각각 생성 후 동일하게 설정:
+
+1. Environment 클릭 → **Deployment protection rules**
+2. **Deployment branches** → **Selected branches and tags**
+3. **Add deployment branch or tag** → `yourgg` 추가
+4. Save
+
+| Environment | 용도 | branch rule |
+| --- | --- | --- |
+| `deploy` | publish/release 빌드·서명 (`workflow_call`, 수동) | **yourgg** only |
+| `publish` | npm publish + GitHub Release | **yourgg** only |
+
+**동작:** Actions에서 publish를 `main`으로 실행하면 `publish` / `deploy` job이 environment에서 거부됨.
+
+**PR CI:** `deploy.yml` PR 트리거는 environment를 쓰지 않음 → feature 브랜치 PR도 빌드 가능.
+
+workflow YAML에 branch 가드 없음 — **UI branch rule만** 사용.
 
 ### 1-3. GitHub Secrets
 
@@ -92,7 +105,7 @@ git push origin yourgg
 GitHub Actions → **publish** → Run workflow
 
 ```
-Branch: yourgg
+Branch: yourgg          ← UI에서 main 고르면 environment가 거부 (yourgg only)
 Bump level: patch / minor / major
 Actually publish: false  ← dry-run
 Actually publish: true   ← 실제 배포
@@ -226,7 +239,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: windows-latest
-    environment: deploy
+    environment: ${{ github.event_name != 'pull_request' && 'deploy' || null }}
     outputs:
       unsigned-artifact-id: ${{ steps.upload-unsigned-artifact.outputs.artifact-id }}
       signed-artifact-id: ${{ steps.upload-signed-artifact.outputs.artifact-id }}

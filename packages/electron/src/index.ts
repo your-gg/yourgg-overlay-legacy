@@ -1,4 +1,4 @@
-import type { Overlay } from '@asdf-overlay/core';
+import type { Overlay } from '@your-gg/yourgg-core';
 
 /**
  * Describe a window in `Overlay`.

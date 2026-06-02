@@ -1,0 +1,14 @@
+{
+  "file_format_version": "1.1.2",
+  "layer": {
+    "name": "VK_LAYER_YOURGG_OVERLAY_overlay",
+    "type": "INSTANCE",
+    "library_path": ".\\yourgg_overlay-x64.dll",
+    "api_version": "1.1",
+    "implementation_version": "1",
+    "description": "YOUR.GG Overlay Vulkan Overlay Layer",
+    "disable_environment": {
+      "DISABLE_YOURGG_OVERLAY_OVERLAY": "1"
+    }
+  }
+}

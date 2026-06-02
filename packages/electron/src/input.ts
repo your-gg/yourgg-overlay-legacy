@@ -1,8 +1,8 @@
 import { screen, type MouseInputEvent, type MouseWheelInputEvent, type WebContents } from 'electron';
 import type { OverlayWindow } from './index.js';
-import type { CursorInput, KeyboardInput } from '@asdf-overlay/core/input';
+import type { CursorInput, KeyboardInput } from '@your-gg/yourgg-core/input';
 import { mapCssCursor, mapKeycode } from './input/conv.js';
-import { Cursor } from '@asdf-overlay/core';
+import { Cursor } from '@your-gg/yourgg-core';
 
 /**
  * Connection from a overlay window to a Electron window.

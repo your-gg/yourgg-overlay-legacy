@@ -1,18 +1,21 @@
 {
-  "name": "@asdf-overlay/core",
+  "name": "@your-gg/yourgg-core",
   "version": "1.2.3",
-  "description": "Asdf overlay core Node addon",
+  "description": "YOUR.GG overlay core Node addon",
   "main": "./lib/index.js",
   "type": "module",
   "author": "storycraft <storycraft@pancake.sh>",
-  "homepage": "https://github.com/storycraft/asdf-overlay#readme",
+  "homepage": "https://github.com/your-gg/yourgg-core#readme",
   "license": "MIT OR Apache-2.0",
   "bugs": {
-    "url": "https://github.com/storycraft/asdf-overlay/issues"
+    "url": "https://github.com/your-gg/yourgg-core/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/storycraft/asdf-overlay"
+    "url": "https://github.com/your-gg/yourgg-core"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
   },
   "scripts": {
     "build-dll": "cargo xtask build-dll --",
@@ -43,9 +46,9 @@
     "lib/**/*",
     "addon-x64.node",
     "addon-aarch64.node",
-    "asdf_overlay-x64.dll",
-    "asdf_overlay-x86.dll",
-    "asdf_overlay-aarch64.dll"
+    "yourgg_overlay-x64.dll",
+    "yourgg_overlay-x86.dll",
+    "yourgg_overlay-aarch64.dll"
   ],
   "devDependencies": {
     "@types/node": "^25.6.0",

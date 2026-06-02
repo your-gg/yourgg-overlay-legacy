@@ -32,10 +32,10 @@ importers:
 
   examples/node/ingame-browser:
     dependencies:
-      '@asdf-overlay/core':
+      '@your-gg/yourgg-core':
         specifier: workspace:*
         version: link:../../../packages/core
-      '@asdf-overlay/electron':
+      '@your-gg/yourgg-overlay':
         specifier: workspace:*
         version: link:../../../packages/electron
       electron:
@@ -60,7 +60,7 @@ importers:
 
   packages/electron:
     dependencies:
-      '@asdf-overlay/core':
+      '@your-gg/yourgg-core':
         specifier: workspace:*
         version: link:../core
       electron:

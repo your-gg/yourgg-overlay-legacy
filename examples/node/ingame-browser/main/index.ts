@@ -1,10 +1,10 @@
 import { app, BrowserWindow } from 'electron';
-import { defaultDllDir, Overlay, percent, type GpuLuid } from '@asdf-overlay/core';
-import { InputState } from '@asdf-overlay/core/input';
+import { defaultDllDir, Overlay, percent, type GpuLuid } from '@your-gg/yourgg-core';
+import { InputState } from '@your-gg/yourgg-core/input';
 import find from 'find-process';
-import { type OverlayWindow } from '@asdf-overlay/electron';
-import { ElectronOverlaySurface } from '@asdf-overlay/electron/surface';
-import { ElectronOverlayInput } from '@asdf-overlay/electron/input';
+import { type OverlayWindow } from '@your-gg/yourgg-overlay';
+import { ElectronOverlaySurface } from '@your-gg/yourgg-overlay/surface';
+import { ElectronOverlayInput } from '@your-gg/yourgg-overlay/input';
 
 async function createOverlayWindow(pid: number) {
   const overlay = await Overlay.attach(

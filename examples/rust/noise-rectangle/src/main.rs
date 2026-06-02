@@ -21,9 +21,9 @@ async fn main() -> anyhow::Result<()> {
     let (mut conn, mut event) = inject(
         pid.parse::<u32>().context("invalid pid")?,
         OverlayDll {
-            x64: Some(&dll_dir.join("asdf_overlay-x64.dll")),
-            x86: Some(&dll_dir.join("asdf_overlay-x86.dll")),
-            arm64: Some(&dll_dir.join("asdf_overlay-aarch64.dll")),
+            x64: Some(&dll_dir.join("yourgg_overlay-x64.dll")),
+            x86: Some(&dll_dir.join("yourgg_overlay-x86.dll")),
+            arm64: Some(&dll_dir.join("yourgg_overlay-aarch64.dll")),
         },
         None,
     )

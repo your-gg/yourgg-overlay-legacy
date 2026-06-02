@@ -1,7 +1,7 @@
 import type { NativeImage, TextureInfo, WebContents, WebContentsPaintEventParams } from 'electron';
 import type { OverlayWindow } from './index.js';
 import EventEmitter from 'node:events';
-import { OverlaySurface, type GpuLuid } from '@asdf-overlay/core';
+import { OverlaySurface, type GpuLuid } from '@your-gg/yourgg-core';
 
 type Emitter = EventEmitter<{
   /**

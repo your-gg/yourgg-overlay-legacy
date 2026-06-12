@@ -18,7 +18,7 @@ use anyhow::{Context, bail};
 use scopeguard::defer;
 use windows::{
     Win32::{
-        Foundation::{BOOL, CloseHandle, FALSE, HANDLE, HINSTANCE, HWND, LPARAM, TRUE, WPARAM},
+        Foundation::{CloseHandle, HANDLE, HINSTANCE, HWND, LPARAM, WPARAM},
         System::{
             LibraryLoader::{GetProcAddress, LoadLibraryW},
             SystemInformation::{
@@ -34,7 +34,7 @@ use windows::{
             SetWindowsHookExW, WH_GETMESSAGE, WM_NULL,
         },
     },
-    core::{PCWSTR, s},
+    core::{BOOL, PCWSTR, s},
 };
 
 use crate::OverlayDll;
@@ -104,7 +104,7 @@ fn current_arch() -> IMAGE_FILE_MACHINE {
 /// `PROCESS_QUERY_LIMITED_INFORMATION` only — an access level permitted even on
 /// Vanguard-protected processes.
 fn target_arch(pid: u32) -> anyhow::Result<IMAGE_FILE_MACHINE> {
-    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid) }
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
         .context("cannot open target process for arch query")?;
     defer!(unsafe {
         _ = CloseHandle(handle);
@@ -141,10 +141,10 @@ unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> BOOL 
     if tid != 0 && window_pid == ctx.pid && unsafe { IsWindowVisible(hwnd) }.as_bool() {
         ctx.thread = tid;
         // Stop enumerating.
-        return FALSE;
+        return BOOL(0);
     }
 
-    TRUE
+    BOOL(1)
 }
 
 /// Find a thread in `pid` that owns a visible top-level window, so it pumps

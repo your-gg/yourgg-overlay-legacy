@@ -42,9 +42,9 @@ pub use asdf_overlay_event as event;
 use core::time::Duration;
 use std::path::Path;
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 use asdf_overlay_common::ipc::create_ipc_addr;
-use tokio::{net::windows::named_pipe::ClientOptions, select, time::sleep};
+use tokio::{net::windows::named_pipe::ClientOptions, time::sleep};
 
 use crate::client::{IpcClientConn, IpcClientEventStream};
 
@@ -70,16 +70,25 @@ pub async fn inject(
     dll: OverlayDll<'_>,
     timeout: Option<Duration>,
 ) -> anyhow::Result<(IpcClientConn, IpcClientEventStream)> {
-    let module_handle =
-        injector::inject(pid, dll, timeout).context("failed to inject overlay DLL")?;
-    let ipc_addr = create_ipc_addr(pid, module_handle);
+    injector::inject(pid, dll, timeout).context("failed to inject overlay DLL")?;
+    let ipc_addr = create_ipc_addr(pid);
 
-    let connect = IpcClientConn::new(ClientOptions::new().open(ipc_addr)?);
-    let timeout = sleep(timeout.unwrap_or(Duration::MAX));
-    let conn = select! {
-        res = connect => res?,
-        _ = timeout => bail!("ipc client wait timeout"),
+    // The DLL is mapped and starts its IPC server asynchronously after the hook
+    // fires inside the target, so the pipe may not exist immediately; retry the
+    // connect until it does (or we time out).
+    let connect = async {
+        loop {
+            match ClientOptions::new().open(&ipc_addr) {
+                Ok(client) => break IpcClientConn::new(client).await,
+                Err(_) => sleep(Duration::from_millis(50)).await,
+            }
+        }
     };
 
-    Ok(conn)
+    match timeout {
+        Some(dur) => tokio::time::timeout(dur, connect)
+            .await
+            .map_err(|_| anyhow::anyhow!("ipc client wait timeout"))?,
+        None => connect.await,
+    }
 }

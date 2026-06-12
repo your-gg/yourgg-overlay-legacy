@@ -25,7 +25,7 @@ use asdf_overlay_common::{
 use asdf_overlay_event::{OverlayEvent, WindowEvent};
 use core::time::Duration;
 use scopeguard::defer;
-use std::{ffi::OsStr, thread};
+use std::{ffi::OsStr, sync::Once, thread};
 use tokio::{
     net::windows::named_pipe::{NamedPipeServer, ServerOptions},
     runtime::Runtime,
@@ -34,7 +34,7 @@ use tokio::{
 use tracing::{debug, error, trace, warn};
 use windows::{
     Win32::{
-        Foundation::{GENERIC_READ, GENERIC_WRITE, HINSTANCE},
+        Foundation::{GENERIC_READ, GENERIC_WRITE, HINSTANCE, HMODULE, LPARAM, LRESULT, WPARAM},
         Security::{
             ACL, AllocateAndInitializeSid,
             Authorization::{
@@ -46,13 +46,16 @@ use windows::{
             SetSecurityDescriptorDacl,
         },
         System::{
-            SystemServices::{
-                DLL_PROCESS_ATTACH, SECURITY_DESCRIPTOR_REVISION, SECURITY_WORLD_RID,
+            LibraryLoader::{
+                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_PIN,
+                GetModuleHandleExW,
             },
+            SystemServices::{SECURITY_DESCRIPTOR_REVISION, SECURITY_WORLD_RID},
             Threading::GetCurrentProcessId,
         },
+        UI::WindowsAndMessaging::CallNextHookEx,
     },
-    core::{BOOL, PSTR},
+    core::{BOOL, PCWSTR, PSTR},
 };
 
 use crate::server::IpcServerConn;
@@ -181,15 +184,19 @@ async fn run_server(
     }
 }
 
-/// Main entry point for DLL.
+/// Ensures the overlay is started at most once per process.
+static INIT: Once = Once::new();
+
+/// Initialize hooks and the IPC server. Runs exactly once, in the *target*
+/// process, driven by [`msg_hook_proc`] when the injected hook first fires.
 ///
-/// # Safety
-/// Can be called by loader only. Must not be called manually.
-#[unsafe(no_mangle)]
-#[allow(non_snake_case, unused_variables)]
-pub unsafe extern "system" fn DllMain(dll_module: HINSTANCE, fdw_reason: u32, _: *mut ()) -> bool {
+/// This is intentionally NOT done in `DllMain`: the injector loads this DLL
+/// into its own process to register the hook, and we must not spin up an
+/// overlay there. The hook proc only ever runs in the target, so gating
+/// initialization on it keeps the injector process inert.
+fn start_overlay(module_handle: usize) {
     #[cfg(debug_assertions)]
-    fn setup_tracing() {
+    {
         use tracing::level_filters::LevelFilter;
 
         use crate::dbg::WinDbgMakeWriter;
@@ -202,33 +209,23 @@ pub unsafe extern "system" fn DllMain(dll_module: HINSTANCE, fdw_reason: u32, _:
             .init();
     }
 
-    if fdw_reason != DLL_PROCESS_ATTACH {
-        return true;
-    }
-
-    // setup tracing first
-    #[cfg(debug_assertions)]
-    setup_tracing();
-
     // setup tokio runtime
     let Ok(rt) = Runtime::new() else {
         error!("cannot create tokio runtime");
-        return false;
+        return;
     };
     let _guard = rt.enter();
 
     let pid = unsafe { GetCurrentProcessId() };
-    let module_handle = dll_module.0 as usize;
     // setup first ipc server
-    let server = match create_ipc_server(create_ipc_addr(pid, module_handle as u32), true) {
+    let server = match create_ipc_server(create_ipc_addr(pid), true) {
         Ok(server) => server,
         Err(err) => {
             error!("cannot open ipc server. err: {err:?}");
-            return false;
+            return;
         }
     };
-    let create_server =
-        move || create_ipc_server(create_ipc_addr(pid, module_handle as u32), false);
+    let create_server = move || create_ipc_server(create_ipc_addr(pid), false);
 
     thread::spawn(move || {
         // initialize overlay
@@ -237,6 +234,47 @@ pub unsafe extern "system" fn DllMain(dll_module: HINSTANCE, fdw_reason: u32, _:
 
         rt.block_on(run_server(server, create_server))
     });
+}
+
+/// Exported `WH_GETMESSAGE` hook procedure used as the injection entry point.
+///
+/// `asdf-overlay-client` injects this DLL by registering this procedure with
+/// `SetWindowsHookExW`; the OS then maps the DLL into the target process and
+/// calls this on the hooked thread. On first call we pin our module (so we
+/// survive the hook being removed), start the overlay once, then forward the
+/// call down the hook chain.
+///
+/// # Safety
+/// Called by the OS hook chain only.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn msg_hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    INIT.call_once(|| {
+        // Pin our module and obtain our own module handle for overlay init.
+        // `GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS` treats the pointer as an
+        // address inside this module rather than a name.
+        let mut hmod = HMODULE::default();
+        unsafe {
+            _ = GetModuleHandleExW(
+                GET_MODULE_HANDLE_EX_FLAG_PIN | GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                PCWSTR(msg_hook_proc as usize as *const u16),
+                &mut hmod,
+            );
+        }
+        start_overlay(hmod.0 as usize);
+    });
+
+    unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
+
+/// DllMain — intentionally minimal. Overlay initialization happens in
+/// [`msg_hook_proc`], so loading this DLL inside the injector process (only to
+/// obtain the hook procedure) does not start an overlay there.
+///
+/// # Safety
+/// Can be called by loader only.
+#[unsafe(no_mangle)]
+#[allow(non_snake_case, unused_variables)]
+pub unsafe extern "system" fn DllMain(dll_module: HINSTANCE, fdw_reason: u32, _: *mut ()) -> bool {
     true
 }
 

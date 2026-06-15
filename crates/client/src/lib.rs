@@ -70,12 +70,23 @@ pub async fn inject(
     dll: OverlayDll<'_>,
     timeout: Option<Duration>,
 ) -> anyhow::Result<(IpcClientConn, IpcClientEventStream)> {
+    // DIAGNOSTIC: split the two phases so we can see whether the latency is the
+    // SetWindowsHookEx install itself (anti-cheat scrutinizing our injector) or
+    // the wait for the DLL to map + start its IPC server (anti-cheat DLL scan /
+    // the target thread pumping). Prints to stderr; remove once diagnosed.
+    let hook_start = std::time::Instant::now();
     injector::inject(pid, dll, timeout).context("failed to inject overlay DLL")?;
+    eprintln!(
+        "[injector] phase A — SetWindowsHookEx install: {:?}",
+        hook_start.elapsed()
+    );
+
     let ipc_addr = create_ipc_addr(pid);
 
     // The DLL is mapped and starts its IPC server asynchronously after the hook
     // fires inside the target, so the pipe may not exist immediately; retry the
     // connect until it does (or we time out).
+    let connect_start = std::time::Instant::now();
     let connect = async {
         loop {
             match ClientOptions::new().open(&ipc_addr) {
@@ -85,10 +96,15 @@ pub async fn inject(
         }
     };
 
-    match timeout {
+    let connected = match timeout {
         Some(dur) => tokio::time::timeout(dur, connect)
             .await
             .map_err(|_| anyhow::anyhow!("ipc client wait timeout"))?,
         None => connect.await,
-    }
+    };
+    eprintln!(
+        "[injector] phase B — DLL map + IPC connect wait: {:?}",
+        connect_start.elapsed()
+    );
+    connected
 }

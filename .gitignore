@@ -1,8 +1,9 @@
 .DS_Store
 /target
 node_modules
+.npmrc
 /packages/*/lib
-/examples/node/ingame-browser/out
+/examples/node/*/out
 doc/book
 packages/core/addon-aarch64.node
 packages/core/addon-x64.node

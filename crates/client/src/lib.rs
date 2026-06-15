@@ -70,8 +70,16 @@ pub async fn inject(
     dll: OverlayDll<'_>,
     timeout: Option<Duration>,
 ) -> anyhow::Result<(IpcClientConn, IpcClientEventStream)> {
+    // Confirm the actual timeout value handed in by the demo. The diagnosis
+    // assumes timeout=5000; if it's None or large, the conclusion changes.
+    eprintln!("[t] inject() called with timeout={timeout:?}");
+
+    let t_a = std::time::Instant::now();
     injector::inject(pid, dll, timeout).context("failed to inject overlay DLL")?;
+    eprintln!("[t] injector::inject {:?}", t_a.elapsed());
     let ipc_addr = create_ipc_addr(pid);
+
+    let t_b = std::time::Instant::now();
 
     // The DLL is mapped and starts its IPC server asynchronously after the hook
     // fires inside the target, so the pipe may not exist immediately; retry the
@@ -85,10 +93,12 @@ pub async fn inject(
         }
     };
 
-    match timeout {
+    let result = match timeout {
         Some(dur) => tokio::time::timeout(dur, connect)
             .await
             .map_err(|_| anyhow::anyhow!("ipc client wait timeout"))?,
         None => connect.await,
-    }
+    };
+    eprintln!("[t] connect {:?}", t_b.elapsed());
+    result
 }

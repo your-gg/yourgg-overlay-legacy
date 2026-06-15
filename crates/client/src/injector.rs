@@ -51,9 +51,7 @@ pub fn inject(pid: u32, dll: OverlayDll, _timeout: Option<Duration>) -> anyhow::
     // arch, and we must load that DLL into our own process to register it. So
     // only same-arch injection is supported here; cross-arch needs a
     // matching-arch helper executable (not yet implemented).
-    let s = std::time::Instant::now();
     let target = target_arch(pid)?;
-    eprintln!("[t] target_arch {:?}", s.elapsed());
     if target != current {
         bail!(
             "cross-arch injection (injector {}, target {}) requires a same-arch helper exe (not implemented)",
@@ -73,36 +71,26 @@ pub fn inject(pid: u32, dll: OverlayDll, _timeout: Option<Duration>) -> anyhow::
     // It does NOT start an overlay here — it only initializes when its hook proc
     // fires inside the target process (see `asdf-overlay-dll`).
     let wide: Vec<u16> = dll_path.as_os_str().encode_wide().chain([0]).collect();
-    let s = std::time::Instant::now();
     let hmod = unsafe { LoadLibraryW(PCWSTR(wide.as_ptr())) }
         .context("failed to load overlay dll in injector process")?;
-    eprintln!("[t] LoadLibraryW {:?}", s.elapsed());
 
-    let s = std::time::Instant::now();
     let proc = unsafe { GetProcAddress(hmod, s!("msg_hook_proc")) }
         .context("overlay dll is missing the `msg_hook_proc` export")?;
-    eprintln!("[t] GetProcAddress {:?}", s.elapsed());
     let hook_proc: HOOKPROC = Some(unsafe { mem::transmute(proc) });
 
-    let s = std::time::Instant::now();
     let thread = find_gui_thread(pid)
         .context("cannot find a GUI thread (visible top-level window) in target process")?;
-    eprintln!("[t] find_gui_thread {:?}", s.elapsed());
 
     // Register the hook; the OS maps the DLL into the target process.
-    let s = std::time::Instant::now();
     unsafe {
         SetWindowsHookExW(WH_GETMESSAGE, hook_proc, Some(HINSTANCE(hmod.0)), thread)
             .context("SetWindowsHookExW failed")?;
     }
-    eprintln!("[t] SetWindowsHookExW {:?}", s.elapsed());
     // Nudge the target thread's message queue so the hook fires now, mapping and
     // initializing the DLL promptly instead of on the next user input.
-    let s = std::time::Instant::now();
     unsafe {
         _ = PostThreadMessageW(thread, WM_NULL, WPARAM(0), LPARAM(0));
     }
-    eprintln!("[t] PostThreadMessageW {:?}", s.elapsed());
 
     Ok(())
 }

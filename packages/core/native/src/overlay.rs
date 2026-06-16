@@ -137,7 +137,9 @@ async fn attach_via_helper(
             Ok(res) => res.context("failed to wait for injector helper")?,
             Err(_) => bail!("injector helper timed out after {dur:?}"),
         },
-        None => output_fut.await.context("failed to wait for injector helper")?,
+        None => output_fut
+            .await
+            .context("failed to wait for injector helper")?,
     };
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

@@ -9,3 +9,6 @@ packages/core/addon-x64.node
 packages/core/yourgg_overlay-aarch64.dll
 packages/core/yourgg_overlay-x64.dll
 packages/core/yourgg_overlay-x86.dll
+packages/core/yourgg-injector-x64.exe
+packages/core/yourgg-injector-x86.exe
+packages/core/yourgg-injector-aarch64.exe

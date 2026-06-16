@@ -27,6 +27,8 @@ on:
         required: false
       AZURE_SIGNING_PROFILE:
         required: false
+      SENTRY_AUTH_TOKEN:
+        required: false
   workflow_dispatch:
     inputs:
       sign:
@@ -43,6 +45,7 @@ on:
       - 'crates/**/*'
       - 'src/**/*'
       - 'xtask/**/*'
+      - 'packages/core/**'
 
 concurrency:
   group: deploy-${{ github.ref_name }}
@@ -96,6 +99,30 @@ jobs:
       - name: Deploy
         run: npm run ci:deploy
 
+      # Upload native debug symbols (PDBs) so Sentry can symbolicate crashes in
+      # the overlay DLL / addon / injector helper. Only on real (signed)
+      # releases — not PR CI — so we only ship symbols for user-facing binaries.
+      # sentry-cli scans each release dir and uploads every PE together with its
+      # PDB in one invocation (required to associate the debug identifier).
+      # MUST target the SAME Sentry project the consuming app's @sentry/electron
+      # sends crashes to, or they won't resolve.
+      - name: Upload debug files (PDB) to Sentry
+        if: ${{ inputs.sign }}
+        shell: bash
+        run: |
+          if [ -z "$SENTRY_AUTH_TOKEN" ]; then
+            echo "::error::SENTRY_AUTH_TOKEN is not set (needed to upload debug files)"
+            exit 1
+          fi
+          npx -y @sentry/cli debug-files upload --include-sources --wait \
+            target/x86_64-pc-windows-msvc/release \
+            target/i686-pc-windows-msvc/release \
+            target/aarch64-pc-windows-msvc/release
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+
       - name: Upload unsigned artifact
         id: upload-unsigned-artifact
         uses: actions/upload-artifact@v4
@@ -107,6 +134,7 @@ jobs:
             packages/core/yourgg_overlay-aarch64.dll
             packages/core/yourgg_overlay-x86.dll
             packages/core/yourgg_overlay-x64.dll
+            packages/core/yourgg-injector-x64.exe
 
       - name: Download unsigned artifact for signing
         if: ${{ inputs.sign }}
@@ -127,7 +155,7 @@ jobs:
           signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
           files-folder: target/unsigned
-          files-folder-filter: dll,node
+          files-folder-filter: dll,node,exe
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256

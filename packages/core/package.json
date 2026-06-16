@@ -19,10 +19,11 @@
   },
   "scripts": {
     "build-dll": "cargo xtask build-dll --",
+    "build-injector": "cargo xtask build-injector --",
     "cargo-build": "cargo xtask build-node --",
-    "build:debug": "npm run cargo-build && npm run build-dll && tsc",
+    "build:debug": "npm run cargo-build && npm run build-dll && npm run build-injector && tsc",
     "build:dist": "tsc",
-    "build": "npm run cargo-build -- --release && npm run build-dll -- --release && npm run build:dist"
+    "build": "npm run cargo-build -- --release && npm run build-dll -- --release && npm run build-injector -- --release && npm run build:dist"
   },
   "os": [
     "win32"
@@ -48,7 +49,8 @@
     "addon-aarch64.node",
     "yourgg_overlay-x64.dll",
     "yourgg_overlay-x86.dll",
-    "yourgg_overlay-aarch64.dll"
+    "yourgg_overlay-aarch64.dll",
+    "yourgg-injector-x64.exe"
   ],
   "devDependencies": {
     "@types/node": "^25.6.0",

@@ -1,0 +1,18 @@
+[package]
+name = "injector-helper"
+publish = false
+edition.workspace = true
+license.workspace = true
+authors = ["storycraft <storycraft@pancake.sh>"]
+
+# Underscored bin target name so xtask's artifact matcher (which maps the
+# package name `injector-helper` -> `injector_helper`) finds the executable.
+[[bin]]
+name = "injector_helper"
+path = "src/main.rs"
+
+[dependencies]
+asdf-overlay-client = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+
+anyhow = "1.0.97"

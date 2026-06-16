@@ -65,27 +65,59 @@ pub struct OverlayDll<'a> {
 /// * If you didn't supply DLL path for the target architecture, it will return an error.
 /// * If injection or IPC connection fails, it will return an error.
 /// * If timeout is `None`, it may wait indefinitely.
+///
+/// This installs the hook *in the calling process*. When the caller is a large
+/// host process (e.g. an Electron/Chromium app), Vanguard scrutinizes the hook
+/// install and `SetWindowsHookExW` blocks for ~11-16s. To avoid that, run
+/// [`install_hook`] from a small dedicated helper exe and then call [`connect`]
+/// here — measured ~2s instead. See `examples/rust/inject-probe`.
 pub async fn inject(
     pid: u32,
     dll: OverlayDll<'_>,
     timeout: Option<Duration>,
 ) -> anyhow::Result<(IpcClientConn, IpcClientEventStream)> {
-    // DIAGNOSTIC: split the two phases so we can see whether the latency is the
-    // SetWindowsHookEx install itself (anti-cheat scrutinizing our injector) or
-    // the wait for the DLL to map + start its IPC server (anti-cheat DLL scan /
-    // the target thread pumping). Prints to stderr; remove once diagnosed.
+    install_hook(pid, dll, timeout)?;
+    connect(pid, timeout).await
+}
+
+/// Install the overlay hook into the target via `SetWindowsHookExW` (the
+/// expensive step under anti-cheat scrutiny). Returns once the hook is
+/// registered and nudged; the DLL then maps, pins itself, and starts its IPC
+/// server inside the target asynchronously.
+///
+/// Run this from a small dedicated helper process (not a large host like
+/// Electron) to keep the anti-cheat validation cost low. After it returns,
+/// wait for the IPC server with [`wait_for_ipc`] (helper side) or connect with
+/// [`connect`] (client side).
+///
+/// NOTE: `timeout` is currently NOT enforced here — the hook install is a
+/// synchronous, uninterruptible Win32 syscall, so a tokio timeout cannot cancel
+/// it. Bound a wedged install at the process boundary instead (kill the helper).
+pub fn install_hook(
+    pid: u32,
+    dll: OverlayDll<'_>,
+    timeout: Option<Duration>,
+) -> anyhow::Result<()> {
+    // DIAGNOSTIC: A1/A2/A3 within injector::inject are printed there; this is
+    // the phase A total. Prints to stderr; remove once diagnosed.
     let hook_start = std::time::Instant::now();
     injector::inject(pid, dll, timeout).context("failed to inject overlay DLL")?;
     eprintln!(
-        "[injector] phase A — SetWindowsHookEx install: {:?}",
+        "[injector] phase A — injector::inject total (= A1 LoadLibraryW + A2 find thread + A3 SetWindowsHookEx): {:?}",
         hook_start.elapsed()
     );
+    Ok(())
+}
 
+/// Connect to the overlay's IPC server, which the injected DLL starts inside the
+/// target after [`install_hook`] fires. The pipe may not exist immediately, so
+/// the connect is retried until it succeeds (or `timeout` elapses).
+pub async fn connect(
+    pid: u32,
+    timeout: Option<Duration>,
+) -> anyhow::Result<(IpcClientConn, IpcClientEventStream)> {
     let ipc_addr = create_ipc_addr(pid);
 
-    // The DLL is mapped and starts its IPC server asynchronously after the hook
-    // fires inside the target, so the pipe may not exist immediately; retry the
-    // connect until it does (or we time out).
     let connect_start = std::time::Instant::now();
     let connect = async {
         loop {
@@ -107,4 +139,32 @@ pub async fn inject(
         connect_start.elapsed()
     );
     connected
+}
+
+/// Wait until the overlay's IPC server is up (the pipe becomes openable),
+/// without holding a connection. Used by the injector helper process to confirm
+/// the DLL has mapped and pinned itself before exiting — once this returns, the
+/// hook can be safely removed (helper exit) and a real client may [`connect`].
+pub async fn wait_for_ipc(pid: u32, timeout: Option<Duration>) -> anyhow::Result<()> {
+    let ipc_addr = create_ipc_addr(pid);
+
+    // Probe pipe existence by opening then immediately dropping the handle. The
+    // DLL's server loop (`run_server`) tolerates this transient connect and
+    // re-arms a fresh instance for the real client.
+    let wait = async {
+        loop {
+            match ClientOptions::new().open(&ipc_addr) {
+                Ok(_probe) => break,
+                Err(_) => sleep(Duration::from_millis(50)).await,
+            }
+        }
+    };
+
+    match timeout {
+        Some(dur) => tokio::time::timeout(dur, wait)
+            .await
+            .map_err(|_| anyhow::anyhow!("ipc server wait timeout"))?,
+        None => wait.await,
+    }
+    Ok(())
 }

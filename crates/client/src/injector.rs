@@ -70,22 +70,42 @@ pub fn inject(pid: u32, dll: OverlayDll, _timeout: Option<Duration>) -> anyhow::
     // Load the overlay DLL into the injector process to obtain the hook proc.
     // It does NOT start an overlay here — it only initializes when its hook proc
     // fires inside the target process (see `asdf-overlay-dll`).
+    // DIAGNOSTIC: split phase A into its three real Win32 calls so we can tell
+    // whether the latency is the DLL load (LoadLibraryW), the window scan
+    // (find_gui_thread), or the hook-install syscall (SetWindowsHookExW) itself.
+    // The outer "phase A" label conflates all three; do not read it as the hook
+    // call alone. Prints to stderr; remove once diagnosed.
     let wide: Vec<u16> = dll_path.as_os_str().encode_wide().chain([0]).collect();
+    let t_load = std::time::Instant::now();
     let hmod = unsafe { LoadLibraryW(PCWSTR(wide.as_ptr())) }
         .context("failed to load overlay dll in injector process")?;
+    eprintln!(
+        "[injector]   A1 LoadLibraryW (map overlay dll into THIS process): {:?}",
+        t_load.elapsed()
+    );
 
     let proc = unsafe { GetProcAddress(hmod, s!("msg_hook_proc")) }
         .context("overlay dll is missing the `msg_hook_proc` export")?;
     let hook_proc: HOOKPROC = Some(unsafe { mem::transmute(proc) });
 
+    let t_find = std::time::Instant::now();
     let thread = find_gui_thread(pid)
         .context("cannot find a GUI thread (visible top-level window) in target process")?;
+    eprintln!(
+        "[injector]   A2 find_gui_thread (EnumWindows): {:?}",
+        t_find.elapsed()
+    );
 
     // Register the hook; the OS maps the DLL into the target process.
+    let t_hook = std::time::Instant::now();
     unsafe {
         SetWindowsHookExW(WH_GETMESSAGE, hook_proc, Some(HINSTANCE(hmod.0)), thread)
             .context("SetWindowsHookExW failed")?;
     }
+    eprintln!(
+        "[injector]   A3 SetWindowsHookExW (the actual hook-install syscall): {:?}",
+        t_hook.elapsed()
+    );
     // Nudge the target thread's message queue so the hook fires now, mapping and
     // initializing the DLL promptly instead of on the next user input.
     unsafe {

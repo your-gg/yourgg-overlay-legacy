@@ -83,6 +83,10 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Push version bump
+        if: ${{ inputs.execute }}
+        run: git push origin HEAD:${{ github.ref_name }}
+
       - name: Release
         if: ${{ inputs.execute }}
         uses: softprops/action-gh-release@v2

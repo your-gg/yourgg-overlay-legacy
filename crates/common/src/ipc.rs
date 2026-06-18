@@ -48,6 +48,15 @@ pub enum ServerToClientPacket {
     Event(OverlayEvent),
 }
 
+/// Maximum allowed frame body size in bytes.
+///
+/// The frame size is read from a peer-controlled `u32`. Without an upper bound,
+/// a malicious or buggy peer could request an allocation up to ~4 GiB, causing
+/// an out-of-memory abort inside the injected DLL (which would take down the
+/// host game). Cap the size at a generous-but-sane 64 MiB; any frame larger than
+/// this is rejected before any allocation is performed.
+pub const MAX_FRAME: u32 = 64 * 1024 * 1024;
+
 /// Describes a frame header for IPC communication.
 #[derive(Debug, Clone, Copy)]
 pub struct Frame {
@@ -57,10 +66,20 @@ pub struct Frame {
 
 impl Frame {
     /// Reads a frame header from the given async reader.
+    ///
+    /// Rejects frames whose advertised body size exceeds [`MAX_FRAME`] *before*
+    /// any allocation is performed by the caller, preventing an unbounded
+    /// peer-controlled allocation.
     pub async fn read(mut r: impl AsyncRead + Unpin) -> io::Result<Self> {
-        Ok(Self {
-            size: r.read_u32().await?,
-        })
+        let size = r.read_u32().await?;
+        if size > MAX_FRAME {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("frame size {size} exceeds maximum allowed {MAX_FRAME}"),
+            ));
+        }
+
+        Ok(Self { size })
     }
 
     /// Writes the frame header to the given async writer.

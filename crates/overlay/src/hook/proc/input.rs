@@ -28,6 +28,8 @@ windows::core::link!("user32.dll" "system" fn SetCursorPos(x: i32, y: i32) -> BO
 windows::core::link!("user32.dll" "system" fn GetClipCursor(lprect: *mut RECT) -> BOOL);
 windows::core::link!("user32.dll" "system" fn GetCursorPos(lppoint: *mut POINT) -> BOOL);
 windows::core::link!("user32.dll" "system" fn GetPhysicalCursorPos(lppoint: *mut POINT) -> BOOL);
+windows::core::link!("user32.dll" "system" fn GetClientRect(hwnd: HWND, lprect: *mut RECT) -> BOOL);
+windows::core::link!("user32.dll" "system" fn ClientToScreen(hwnd: HWND, lppoint: *mut POINT) -> BOOL);
 windows::core::link!("user32.dll" "system" fn GetKeyboardState(buf: *mut u8) -> BOOL);
 windows::core::link!("user32.dll" "system" fn GetKeyState(vkey: i32) -> i16);
 windows::core::link!("user32.dll" "system" fn GetAsyncKeyState(vkey: i32) -> i16);
@@ -200,13 +202,40 @@ extern "system" fn hooked_get_clip_cursor(lprect: *mut RECT) -> BOOL {
     }
 }
 
+/// Neutral cursor position reported while input is blocked: the centre of the
+/// foreground window, in screen coords.
+///
+/// Returning a *fixed* point keeps games from tracking real mouse movement while
+/// the overlay is grabbed. Previously this was `(0, 0)` — but that is a screen
+/// *corner*, which sits inside the edge-scroll zone of edge-panning games (e.g.
+/// League of Legends), so the camera scrolled to the top-left while the overlay
+/// was held. The window centre is never in an edge zone, so it doesn't pan.
+#[inline]
+fn blocked_cursor_pos() -> POINT {
+    let hwnd = unsafe { GetForegroundWindow() };
+    if !hwnd.is_invalid() {
+        let mut rect = RECT::default();
+        if unsafe { GetClientRect(hwnd, &mut rect) }.as_bool() {
+            let mut center = POINT {
+                x: (rect.left + rect.right) / 2,
+                y: (rect.top + rect.bottom) / 2,
+            };
+            // GetCursorPos reports screen coords; map the client centre to screen.
+            unsafe {
+                _ = ClientToScreen(hwnd, &mut center);
+            }
+            return center;
+        }
+    }
+    POINT { x: 0, y: 0 }
+}
+
 #[tracing::instrument]
 extern "system" fn hooked_get_cursor_pos(lppoint: *mut POINT) -> BOOL {
     if foreground_hwnd_input_blocked() {
-        // Return a fixed position instead of the real cursor position to prevent games from tracking mouse movement
         if !lppoint.is_null() {
             unsafe {
-                lppoint.write(POINT { x: 0, y: 0 });
+                lppoint.write(blocked_cursor_pos());
             }
         }
         return BOOL(1);
@@ -218,10 +247,9 @@ extern "system" fn hooked_get_cursor_pos(lppoint: *mut POINT) -> BOOL {
 #[tracing::instrument]
 extern "system" fn hooked_get_physical_cursor_pos(lppoint: *mut POINT) -> BOOL {
     if foreground_hwnd_input_blocked() {
-        // Return a fixed position instead of the real cursor position to prevent games from tracking mouse movement
         if !lppoint.is_null() {
             unsafe {
-                lppoint.write(POINT { x: 0, y: 0 });
+                lppoint.write(blocked_cursor_pos());
             }
         }
         return BOOL(1);

@@ -53,7 +53,9 @@ fn process_wnd_proc(
 ) -> Option<LRESULT> {
     match msg {
         msg::WM_WINDOWPOSCHANGED => {
-            let new_size = get_client_size(HWND(backend.id as _)).unwrap();
+            let Ok(new_size) = get_client_size(HWND(backend.id as _)) else {
+                return None;
+            };
             let mut render = backend.render.lock();
             if render.window_size != new_size {
                 render.window_size = new_size;
@@ -302,8 +304,8 @@ fn process_wnd_proc(
         | msg::WM_POINTERCAPTURECHANGED
         | msg::WM_POINTERWHEEL
         | msg::WM_POINTERHWHEEL => {
-            let proc = backend.proc.lock();
-            if proc.input_blocking() {
+            let input_blocking = backend.proc.lock().input_blocking();
+            if input_blocking {
                 return Some(unsafe { DefWindowProcA(HWND(backend.id as _), msg, wparam, lparam) });
             }
         }
@@ -536,7 +538,9 @@ pub(crate) unsafe extern "system" fn hooked_wnd_proc(
         }
     });
 
-    let backend = BACKENDS.map.get(&(hwnd.0 as u32)).unwrap();
+    let Some(backend) = BACKENDS.map.get(&(hwnd.0 as u32)) else {
+        return unsafe { DefWindowProcA(hwnd, msg, wparam, lparam) };
+    };
     if let Some(ret) = process_wnd_proc(&backend, msg, wparam, lparam) {
         return ret;
     }
@@ -670,28 +674,39 @@ fn get_ime_candidate_list(himc: HIMC, index: u32) -> Option<ImeCandidateList> {
         ..
     } = unsafe { **candidate_list_ptr };
     let candidates = {
-        let mut list = Vec::with_capacity(count as _);
-        let base = unsafe { &raw mut (**candidate_list_ptr).dwOffset }.cast::<u32>();
+        // The candidate buffer is `byte_size` bytes starting at the
+        // CANDIDATELIST. dwCount and the per-candidate offsets are reported by
+        // the IME and are untrusted, so every access below is clamped to the
+        // allocated buffer to prevent out-of-bounds reads on a corrupt list.
+        let base_addr = *candidate_list_ptr as usize;
+        let buf_end = base_addr + byte_size as usize;
+
+        let offsets = unsafe { &raw mut (**candidate_list_ptr).dwOffset }.cast::<u32>();
+        // Clamp dwCount so reading the offset table stays inside the buffer.
+        let max_offsets = buf_end.saturating_sub(offsets as usize) / mem::size_of::<u32>();
+        let count = (count as usize).min(max_offsets);
+
+        let mut list = Vec::with_capacity(count);
         for i in 0..count {
-            let candidate_offset = unsafe { *base.add(i as _) };
-            let candidate_start = unsafe {
-                candidate_list_ptr
-                    .byte_add(candidate_offset as _)
-                    .cast::<u16>()
-            };
-            let size = {
-                let mut len = 0;
-                while (unsafe { *candidate_start.add(len) }) != 0 {
-                    len += 1;
-                }
-                len * 2
-            };
+            let candidate_offset = unsafe { *offsets.add(i) } as usize;
+            // The offset must point inside the buffer.
+            if candidate_offset >= byte_size as usize {
+                continue;
+            }
+            let candidate_start = (base_addr + candidate_offset) as *const u16;
+
+            // Scan for the NUL terminator, but never past the buffer end.
+            let max_len = buf_end.saturating_sub(candidate_start as usize) / mem::size_of::<u16>();
+            let mut len = 0;
+            while len < max_len && unsafe { *candidate_start.add(len) } != 0 {
+                len += 1;
+            }
 
             list.push(
                 unsafe {
                     WStr::from_utf16le_unchecked(slice::from_raw_parts(
                         candidate_start.cast::<u8>(),
-                        size,
+                        len * 2,
                     ))
                 }
                 .to_utf8(),

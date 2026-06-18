@@ -81,6 +81,17 @@ impl Backends {
             .map
             .entry(id)
             .or_try_insert_with(|| {
+                // Create the interop device and query the client size BEFORE
+                // installing the WNDPROC subclass. If either fails the `?`
+                // operator returns early, leaving the game's original wndproc
+                // intact and avoiding an orphaned subclass with no map entry.
+                let interop = DxInterop::create(adapter_fn().as_ref())
+                    .context("failed to create backend interop dxdevice")?;
+
+                let window_size = get_client_size(HWND(id as _))?;
+
+                // Install the subclass last, only after the fallible work
+                // succeeded, capturing the original wndproc.
                 let original_proc: WNDPROC = unsafe {
                     mem::transmute::<isize, WNDPROC>(SetWindowLongPtrA(
                         HWND(id as _),
@@ -88,11 +99,6 @@ impl Backends {
                         hooked_wnd_proc as *const () as _,
                     ) as _)
                 };
-
-                let interop = DxInterop::create(adapter_fn().as_ref())
-                    .context("failed to create backend interop dxdevice")?;
-
-                let window_size = get_client_size(HWND(id as _))?;
 
                 OverlayEventSink::emit(OverlayEvent::Window {
                     id,

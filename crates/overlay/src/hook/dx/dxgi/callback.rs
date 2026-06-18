@@ -19,17 +19,22 @@ pub fn register_swapchain_destruction_callback<F: FnOnce(usize) + Send + 'static
         (this.f)(this.this)
     }
 
-    let notifier = swapchain.cast::<ID3DDestructionNotifier>().unwrap();
-    unsafe {
-        // register with swapchain pointer without increasing ref
-        notifier
-            .RegisterDestructionCallback(
-                Some(callback::<F>),
-                Box::leak(Box::new(Data {
-                    this: swapchain.as_raw() as _,
-                    f,
-                })) as *mut _ as _,
-            )
-            .unwrap();
+    let Ok(notifier) = swapchain.cast::<ID3DDestructionNotifier>() else {
+        return;
+    };
+
+    // Hand the boxed data to the destruction callback as a raw pointer. On a
+    // successful registration the callback reclaims it via `Box::from_raw` when
+    // the swapchain is destroyed. If registration fails the callback will never
+    // fire, so reclaim the box here instead of leaking it (and the closure).
+    let data = Box::into_raw(Box::new(Data {
+        this: swapchain.as_raw() as _,
+        f,
+    }));
+    // register with swapchain pointer without increasing ref
+    let registered =
+        unsafe { notifier.RegisterDestructionCallback(Some(callback::<F>), data as *mut _ as _) };
+    if registered.is_err() {
+        drop(unsafe { Box::from_raw(data) });
     }
 }

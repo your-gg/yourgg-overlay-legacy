@@ -50,11 +50,9 @@ fn draw_overlay(swapchain: &IDXGISwapChain1) {
                 unsafe { factory.EnumAdapterByLuid::<IDXGIAdapter>(luid) }.ok()
             },
             |backend| {
-                dx12::draw_overlay(
-                    backend,
-                    &device,
-                    &swapchain.cast::<IDXGISwapChain3>().unwrap(),
-                );
+                if let Ok(swapchain3) = swapchain.cast::<IDXGISwapChain3>() {
+                    dx12::draw_overlay(backend, &device, &swapchain3);
+                }
             },
         ) {
             error!("Backends::with_or_init_backend failed. err: {:?}", _err);
@@ -62,7 +60,7 @@ fn draw_overlay(swapchain: &IDXGISwapChain1) {
     } else if let Ok(device) = unsafe { swapchain.GetDevice::<ID3D11Device1>() }
         && let Err(_err) = Backends::with_or_init_backend(
             hwnd.0 as _,
-            || unsafe { device.cast::<IDXGIDevice>().unwrap().GetAdapter().ok() },
+            || unsafe { device.cast::<IDXGIDevice>().ok()?.GetAdapter().ok() },
             |backend| {
                 dx11::draw_overlay(backend, &device, swapchain);
             },
@@ -81,8 +79,9 @@ extern "system" fn hooked_present(
     trace!("Present called");
 
     if !flags.contains(DXGI_PRESENT_TEST) && OverlayEventSink::connected() {
-        let swapchain = unsafe { IDXGISwapChain1::from_raw_borrowed(&this).unwrap() };
-        draw_overlay(swapchain);
+        if let Some(swapchain) = unsafe { IDXGISwapChain1::from_raw_borrowed(&this) } {
+            draw_overlay(swapchain);
+        }
     }
 
     unsafe { HOOK.present.wait().original_fn()(this, sync_interval, flags) }
@@ -98,8 +97,9 @@ extern "system" fn hooked_present1(
     trace!("Present1 called");
 
     if !flags.contains(DXGI_PRESENT_TEST) && OverlayEventSink::connected() {
-        let swapchain = unsafe { IDXGISwapChain1::from_raw_borrowed(&this).unwrap() };
-        draw_overlay(swapchain);
+        if let Some(swapchain) = unsafe { IDXGISwapChain1::from_raw_borrowed(&this) } {
+            draw_overlay(swapchain);
+        }
     }
 
     unsafe { HOOK.present1.wait().original_fn()(this, sync_interval, flags, present_params) }

@@ -113,7 +113,8 @@ impl<const BUFFERS: usize> OverlaySurface<BUFFERS> {
             self.device
                 .OpenSharedResource::<ID3D11Texture2D>(HANDLE(handle as _), &mut src_texture)?
         };
-        with_external_texture(&src_texture.unwrap(), |src_texture| {
+        let src_texture = src_texture.context("failed to open shared resource")?;
+        with_external_texture(&src_texture, |src_texture| {
             self.update_surface_from(width, height, src_texture, rect)
         })
     }
@@ -251,6 +252,12 @@ fn copy_to_surface(
         x > width || y > height
     }
 
+    /// Returns the sum if it does not overflow, otherwise `None` (treated as out-of-bounds).
+    #[inline]
+    fn checked(a: u32, b: u32) -> Option<u32> {
+        a.checked_add(b)
+    }
+
     let mut src_desc = D3D11_TEXTURE2D_DESC::default();
     unsafe {
         src.GetDesc(&mut src_desc);
@@ -258,20 +265,21 @@ fn copy_to_surface(
 
     match rect {
         Some(rect) => unsafe {
+            // Compute the box edges with checked addition; an overflow means the
+            // requested region is degenerate and must be treated as out-of-range.
+            let (Some(dst_right), Some(dst_bottom), Some(src_right), Some(src_bottom)) = (
+                checked(rect.dst_x, rect.src.width),
+                checked(rect.dst_y, rect.src.height),
+                checked(rect.src.x, rect.src.width),
+                checked(rect.src.y, rect.src.height),
+            ) else {
+                bail!("CopyRect is out of range");
+            };
+
             if is_out(rect.dst_x, rect.dst_y, width, height)
-                || is_out(
-                    rect.dst_x + rect.src.width,
-                    rect.dst_y + rect.src.height,
-                    width,
-                    height,
-                )
+                || is_out(dst_right, dst_bottom, width, height)
                 || is_out(rect.src.x, rect.src.y, src_desc.Width, src_desc.Height)
-                || is_out(
-                    rect.src.x + rect.src.width,
-                    rect.src.y + rect.src.height,
-                    src_desc.Width,
-                    src_desc.Height,
-                )
+                || is_out(src_right, src_bottom, src_desc.Width, src_desc.Height)
             {
                 bail!("CopyRect is out of range");
             }
@@ -288,8 +296,8 @@ fn copy_to_surface(
                     left: rect.src.x,
                     top: rect.src.y,
                     front: 0,
-                    right: rect.src.x + rect.src.width,
-                    bottom: rect.src.y + rect.src.height,
+                    right: src_right,
+                    bottom: src_bottom,
                     back: 1,
                 }),
             );
@@ -307,7 +315,7 @@ fn copy_to_surface(
 fn with_external_texture<R>(texture: &ID3D11Texture2D, f: impl FnOnce(&ID3D11Texture2D) -> R) -> R {
     if let Ok(mutex) = texture.cast::<IDXGIKeyedMutex>() {
         unsafe {
-            mutex.AcquireSync(0, u32::MAX).unwrap();
+            _ = mutex.AcquireSync(0, u32::MAX);
         }
         defer!({
             unsafe {

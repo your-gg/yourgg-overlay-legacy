@@ -18,7 +18,7 @@ use anyhow::{Context, bail};
 use scopeguard::defer;
 use windows::{
     Win32::{
-        Foundation::{CloseHandle, HANDLE, HINSTANCE, HWND, LPARAM, WPARAM},
+        Foundation::{CloseHandle, FILETIME, HANDLE, HINSTANCE, HWND, LPARAM, WPARAM},
         System::{
             LibraryLoader::{GetProcAddress, LoadLibraryW},
             SystemInformation::{
@@ -26,7 +26,9 @@ use windows::{
                 IMAGE_FILE_MACHINE_I386, IMAGE_FILE_MACHINE_UNKNOWN,
             },
             Threading::{
-                GetCurrentProcess, IsWow64Process2, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+                GetCurrentProcess, GetProcessIdOfThread, GetProcessTimes, IsWow64Process2,
+                OpenProcess, OpenThread, PROCESS_QUERY_LIMITED_INFORMATION,
+                THREAD_QUERY_LIMITED_INFORMATION,
             },
         },
         UI::WindowsAndMessaging::{
@@ -81,6 +83,21 @@ pub fn inject(pid: u32, dll: OverlayDll, _timeout: Option<Duration>) -> anyhow::
     let thread = find_gui_thread(pid)
         .context("cannot find a GUI thread (visible top-level window) in target process")?;
 
+    // Capture a strong identity (process creation time) for the target at
+    // discovery time. PIDs are recycled by the OS, so the bare `pid`/`thread`
+    // discovered above could, by the time we hook, belong to a *different*
+    // process that reused the same numeric id. The creation time pins the exact
+    // process instance and lets us detect such a reuse before we act on it.
+    let creation_time = process_creation_time(pid)
+        .context("cannot read target process creation time for identity check")?;
+
+    // Re-validate immediately before hooking: the thread must still belong to a
+    // live process with the same pid *and* the same creation time. This closes
+    // the time-of-check/time-of-use gap between discovery and `SetWindowsHookExW`
+    // (target exited / pid recycled into an unrelated process).
+    validate_thread_identity(thread, pid, creation_time)
+        .context("target process changed between discovery and injection; aborting")?;
+
     // Register the hook; the OS maps the DLL into the target process.
     unsafe {
         SetWindowsHookExW(WH_GETMESSAGE, hook_proc, Some(HINSTANCE(hmod.0)), thread)
@@ -110,6 +127,71 @@ fn target_arch(pid: u32) -> anyhow::Result<IMAGE_FILE_MACHINE> {
         _ = CloseHandle(handle);
     });
     Ok(process_arch(handle))
+}
+
+/// Read the creation time of `pid` as a strong, recycle-proof identity.
+///
+/// PIDs are reused; the (pid, creation-time) pair uniquely identifies a process
+/// instance. Opens the process with `PROCESS_QUERY_LIMITED_INFORMATION` only —
+/// an access level permitted even on Vanguard-protected processes.
+fn process_creation_time(pid: u32) -> anyhow::Result<u64> {
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
+        .context("cannot open target process for creation-time query")?;
+    defer!(unsafe {
+        _ = CloseHandle(handle);
+    });
+
+    let mut creation = FILETIME::default();
+    let (mut exit, mut kernel, mut user) =
+        (FILETIME::default(), FILETIME::default(), FILETIME::default());
+    unsafe {
+        GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user)
+            .context("GetProcessTimes failed for target process")?;
+    }
+
+    Ok(filetime_to_u64(creation))
+}
+
+/// Verify the discovered `thread` still belongs to a live process that is the
+/// *same* instance as the one discovered (matching `pid` and `expected_creation`
+/// creation time). Bails if the thread is gone, now owned by a different pid, or
+/// the pid has been recycled into an unrelated process. This guards against the
+/// time-of-check/time-of-use gap before `SetWindowsHookExW`.
+fn validate_thread_identity(thread: u32, pid: u32, expected_creation: u64) -> anyhow::Result<()> {
+    // Open the thread by id and resolve its *current* owning process. If the
+    // thread has exited, this open fails and we bail — exactly what we want.
+    let thandle = unsafe { OpenThread(THREAD_QUERY_LIMITED_INFORMATION, false, thread) }
+        .context("target GUI thread no longer exists")?;
+    defer!(unsafe {
+        _ = CloseHandle(thandle);
+    });
+
+    let owner = unsafe { GetProcessIdOfThread(thandle) };
+    if owner == 0 {
+        bail!("cannot resolve owning process of target GUI thread");
+    }
+    if owner != pid {
+        bail!(
+            "target GUI thread now belongs to pid {owner}, expected {pid} (pid recycled or thread reassigned)",
+        );
+    }
+
+    // Same pid is not enough — the pid itself could have been recycled. Confirm
+    // the creation time still matches the instance we discovered.
+    let creation = process_creation_time(pid)
+        .context("cannot re-read target creation time for identity check")?;
+    if creation != expected_creation {
+        bail!(
+            "target pid {pid} was recycled (creation time changed) between discovery and injection",
+        );
+    }
+
+    Ok(())
+}
+
+/// Flatten a [`FILETIME`] into a single 64-bit tick count for comparison.
+fn filetime_to_u64(ft: FILETIME) -> u64 {
+    ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64)
 }
 
 /// Get the architecture of a process handle (resolving WOW64).

@@ -16,7 +16,7 @@ use ash::{
     vk::{self, BaseInStructure, Handle},
 };
 use once_cell::sync::Lazy;
-use tracing::{debug, trace};
+use tracing::{debug, error, trace};
 
 /// Map of [`Device`] to its dispatch table.
 static DISPATCH_TABLE: Lazy<IntDashMap<u64, DispatchTable>> = Lazy::new(IntDashMap::default);
@@ -166,39 +166,40 @@ pub(super) extern "system" fn create_device(
     let info = unsafe { &*info };
     let device = unsafe { *device };
 
-    let get_device_queue = (unsafe {
+    let mut queues = vec![];
+    if let Some(get_device_queue) = unsafe {
         resolve_proc!(next_get_device_proc_addr =>
             device,
             c"vkGetDeviceQueue": vk::PFN_vkGetDeviceQueue
         )
-    })
-    .unwrap();
-
-    let mut queues = vec![];
-    unsafe {
-        for info in slice::from_raw_parts(
-            info.p_queue_create_infos,
-            info.queue_create_info_count as usize,
-        ) {
-            for i in 0..info.queue_count {
-                let mut queue = vk::Queue::null();
-                get_device_queue(device, info.queue_family_index, i, &mut queue);
-                if queue != vk::Queue::null() {
-                    debug!(
-                        "found queue: {:?} family_index: {} index: {}",
-                        queue, info.queue_family_index, i
-                    );
-                    queues.push(queue);
-                    QUEUE_MAP.insert(
-                        queue.as_raw(),
-                        QueueData {
-                            device,
-                            family_index: info.queue_family_index,
-                        },
-                    );
+    } {
+        unsafe {
+            for info in slice::from_raw_parts(
+                info.p_queue_create_infos,
+                info.queue_create_info_count as usize,
+            ) {
+                for i in 0..info.queue_count {
+                    let mut queue = vk::Queue::null();
+                    get_device_queue(device, info.queue_family_index, i, &mut queue);
+                    if queue != vk::Queue::null() {
+                        debug!(
+                            "found queue: {:?} family_index: {} index: {}",
+                            queue, info.queue_family_index, i
+                        );
+                        queues.push(queue);
+                        QUEUE_MAP.insert(
+                            queue.as_raw(),
+                            QueueData {
+                                device,
+                                family_index: info.queue_family_index,
+                            },
+                        );
+                    }
                 }
             }
         }
+    } else {
+        error!("failed to resolve vkGetDeviceQueue; overlay queues unavailable");
     }
 
     DISPATCH_TABLE.insert(
@@ -218,7 +219,10 @@ extern "system" fn destroy_device(
     trace!("vkDestroyDevice called");
 
     debug!("device dispatch table cleanup");
-    let (_, table) = DISPATCH_TABLE.remove(&device.as_raw()).unwrap();
+    let Some((_, table)) = DISPATCH_TABLE.remove(&device.as_raw()) else {
+        error!("missing dispatch table for vkDestroyDevice");
+        return;
+    };
     for queue in table.queues {
         QUEUE_MAP.remove(&queue.as_raw());
     }

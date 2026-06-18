@@ -267,15 +267,20 @@ fn on_message_read(msg: &MSG) {
             }
         });
 
-        {
+        // Drain the queue into a local Vec and DROP the lock before running the
+        // closures. The closures run arbitrary code (e.g. execute_gui) that may
+        // re-lock proc_queue, which would self-deadlock if held here.
+        let queued = {
             let mut proc_queue = backend.proc_queue.lock();
             if proc_queue.is_empty() {
                 return;
             }
 
-            for f in proc_queue.drain(..) {
-                f(backend);
-            }
+            proc_queue.drain(..).collect::<Vec<_>>()
+        };
+
+        for f in queued {
+            f(backend);
         }
     });
 }

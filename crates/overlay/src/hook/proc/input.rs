@@ -334,7 +334,9 @@ extern "system" fn hooked_get_raw_input_buffer(
     cbsizeheader: u32,
 ) -> u32 {
     if foreground_hwnd_input_blocked() {
-        unsafe { *pcbsize = 0 };
+        if !pcbsize.is_null() {
+            unsafe { *pcbsize = 0 };
+        }
         return 0;
     }
 

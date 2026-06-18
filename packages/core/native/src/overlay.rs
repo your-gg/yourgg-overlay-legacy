@@ -19,6 +19,12 @@ use neon::prelude::*;
 use num::FromPrimitive;
 use tokio::sync::Mutex;
 
+/// Upper bound on a single IPC request round-trip (including acquiring the
+/// connection mutex). A stuck/frozen injected DLL must not hang the host
+/// forever, so every command is bounded by this and surfaces a JS error on
+/// timeout instead of blocking indefinitely.
+const IPC_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+
 struct Overlay(RefCell<Option<Inner>>);
 
 impl Overlay {
@@ -159,11 +165,18 @@ fn overlay_set_position(mut cx: FunctionContext) -> JsResult<JsPromise> {
     let y = deserialize_percent_length(&mut cx, &y)?;
 
     with_rt(&mut cx, async move {
-        ipc.lock()
-            .await
-            .window(win_id)
-            .request(SetPosition { x, y })
-            .await?;
+        match tokio::time::timeout(IPC_REQUEST_TIMEOUT, async move {
+            ipc.lock()
+                .await
+                .window(win_id)
+                .request(SetPosition { x, y })
+                .await
+        })
+        .await
+        {
+            Ok(res) => res?,
+            Err(_) => bail!("overlay IPC request timed out after {IPC_REQUEST_TIMEOUT:?}"),
+        };
         Ok(())
     })
 }
@@ -177,7 +190,14 @@ fn overlay_update_handle(mut cx: FunctionContext) -> JsResult<JsPromise> {
     };
 
     with_rt(&mut cx, async move {
-        ipc.lock().await.window(win_id).request(update).await?;
+        match tokio::time::timeout(IPC_REQUEST_TIMEOUT, async move {
+            ipc.lock().await.window(win_id).request(update).await
+        })
+        .await
+        {
+            Ok(res) => res?,
+            Err(_) => bail!("overlay IPC request timed out after {IPC_REQUEST_TIMEOUT:?}"),
+        };
         Ok(())
     })
 }
@@ -191,11 +211,18 @@ fn overlay_set_anchor(mut cx: FunctionContext) -> JsResult<JsPromise> {
     let y = deserialize_percent_length(&mut cx, &y)?;
 
     with_rt(&mut cx, async move {
-        ipc.lock()
-            .await
-            .window(win_id)
-            .request(SetAnchor { x, y })
-            .await?;
+        match tokio::time::timeout(IPC_REQUEST_TIMEOUT, async move {
+            ipc.lock()
+                .await
+                .window(win_id)
+                .request(SetAnchor { x, y })
+                .await
+        })
+        .await
+        {
+            Ok(res) => res?,
+            Err(_) => bail!("overlay IPC request timed out after {IPC_REQUEST_TIMEOUT:?}"),
+        };
         Ok(())
     })
 }
@@ -213,16 +240,23 @@ fn overlay_set_margin(mut cx: FunctionContext) -> JsResult<JsPromise> {
     let left = deserialize_percent_length(&mut cx, &left)?;
 
     with_rt(&mut cx, async move {
-        ipc.lock()
-            .await
-            .window(win_id)
-            .request(SetMargin {
-                top,
-                right,
-                bottom,
-                left,
-            })
-            .await?;
+        match tokio::time::timeout(IPC_REQUEST_TIMEOUT, async move {
+            ipc.lock()
+                .await
+                .window(win_id)
+                .request(SetMargin {
+                    top,
+                    right,
+                    bottom,
+                    left,
+                })
+                .await
+        })
+        .await
+        {
+            Ok(res) => res?,
+            Err(_) => bail!("overlay IPC request timed out after {IPC_REQUEST_TIMEOUT:?}"),
+        };
         Ok(())
     })
 }
@@ -265,11 +299,18 @@ fn overlay_listen_input(mut cx: FunctionContext) -> JsResult<JsPromise> {
     let keyboard = cx.argument::<JsBoolean>(3)?.value(&mut cx);
 
     with_rt(&mut cx, async move {
-        ipc.lock()
-            .await
-            .window(win_id)
-            .request(ListenInput { cursor, keyboard })
-            .await?;
+        match tokio::time::timeout(IPC_REQUEST_TIMEOUT, async move {
+            ipc.lock()
+                .await
+                .window(win_id)
+                .request(ListenInput { cursor, keyboard })
+                .await
+        })
+        .await
+        {
+            Ok(res) => res?,
+            Err(_) => bail!("overlay IPC request timed out after {IPC_REQUEST_TIMEOUT:?}"),
+        };
 
         Ok(())
     })
@@ -281,11 +322,18 @@ fn overlay_block_input(mut cx: FunctionContext) -> JsResult<JsPromise> {
     let block = cx.argument::<JsBoolean>(2)?.value(&mut cx);
 
     with_rt(&mut cx, async move {
-        ipc.lock()
-            .await
-            .window(win_id)
-            .request(BlockInput { block })
-            .await?;
+        match tokio::time::timeout(IPC_REQUEST_TIMEOUT, async move {
+            ipc.lock()
+                .await
+                .window(win_id)
+                .request(BlockInput { block })
+                .await
+        })
+        .await
+        {
+            Ok(res) => res?,
+            Err(_) => bail!("overlay IPC request timed out after {IPC_REQUEST_TIMEOUT:?}"),
+        };
 
         Ok(())
     })
@@ -312,11 +360,18 @@ fn overlay_set_blocking_cursor(mut cx: FunctionContext) -> JsResult<JsPromise> {
     };
 
     with_rt(&mut cx, async move {
-        ipc.lock()
-            .await
-            .window(win_id)
-            .request(SetBlockingCursor { cursor })
-            .await?;
+        match tokio::time::timeout(IPC_REQUEST_TIMEOUT, async move {
+            ipc.lock()
+                .await
+                .window(win_id)
+                .request(SetBlockingCursor { cursor })
+                .await
+        })
+        .await
+        {
+            Ok(res) => res?,
+            Err(_) => bail!("overlay IPC request timed out after {IPC_REQUEST_TIMEOUT:?}"),
+        };
 
         Ok(())
     })

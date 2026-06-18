@@ -106,26 +106,32 @@ export class Overlay {
         process.nextTick(resolve);
       });
 
-      try {
-        for (; ;) {
-          const hasNext = await addon.overlayCallNextEvent(
-            id,
-            this.event,
-            (name, ...args) => this.event.emit(name, ...args),
-          );
+      for (; ;) {
+        const hasNext = await addon.overlayCallNextEvent(
+          id,
+          this.event,
+          (name, ...args) => this.event.emit(name, ...args),
+        );
 
-          if (!hasNext) break;
+        // clean disconnect: recv None -> stop pumping and dispose.
+        if (!hasNext) {
+          this.destroy();
+          break;
         }
-      } catch (err) {
-        if (this.event.listenerCount('error') != 0) {
-          this.event.emit('error', err);
-        } else {
-          throw err;
-        }
-      } finally {
-        this.destroy();
       }
-    })();
+    })().catch((err) => {
+      // Never let a rejection from the pump become an unhandledRejection,
+      // which can terminate Electron. Route it to the `error` event so
+      // consumers can react; transient/listener errors must not tear down
+      // the overlay. Only a clean disconnect (handled above) disposes.
+      if (this.event.listenerCount('error') != 0) {
+        this.event.emit('error', err);
+      } else {
+        // No listener attached: log instead of rethrowing so it does not
+        // escape as an unhandled rejection.
+        console.error('Overlay event pump error:', err);
+      }
+    });
   }
 
   /**

@@ -120,10 +120,10 @@ fn serialize_cursor_input<'a>(cx: &mut Cx<'a>, input: CursorInput) -> JsResult<'
     let client_y = cx.number(input.client.y);
     obj.prop(cx, "clientY").set(client_y)?;
 
-    let window_x = cx.number(input.client.x);
+    let window_x = cx.number(input.window.x);
     obj.prop(cx, "windowX").set(window_x)?;
 
-    let window_y = cx.number(input.client.y);
+    let window_y = cx.number(input.window.y);
     obj.prop(cx, "windowY").set(window_y)?;
 
     match input.event {

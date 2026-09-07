@@ -1,4 +1,4 @@
-import { Cursor } from '@asdf-overlay/core';
+import { Cursor } from '@your-gg/yourgg-core';
 
 /**
  * Map CSS cursor into overlay `Cursor`.

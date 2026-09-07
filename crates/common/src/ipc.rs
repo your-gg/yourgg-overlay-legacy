@@ -6,12 +6,16 @@ use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::request::Request;
 
-/// Creates a unique IPC address for the given process ID and module handle.
-/// Because there can be multiple overlays in the same process, we need to distinguish with the module handle.
+/// Creates the IPC address for the given process ID.
+///
+/// Keyed on the target pid only (one overlay per process). Both sides must be
+/// able to compute it identically without sharing a module handle, because the
+/// `SetWindowsHookEx` injection path never learns the loaded module's address
+/// in the target process.
 ///
 /// This function is used internally by `asdf-overlay-client` and `asdf-overlay-dll` crates to establish IPC communication.
-pub fn create_ipc_addr(pid: u32, module_handle: u32) -> String {
-    format!("\\\\.\\pipe\\asdf-overlay-{pid}-{module_handle}")
+pub fn create_ipc_addr(pid: u32) -> String {
+    format!("\\\\.\\pipe\\asdf-overlay-{pid}")
 }
 
 /// Describes a request sent from the client to the server.
@@ -44,6 +48,15 @@ pub enum ServerToClientPacket {
     Event(OverlayEvent),
 }
 
+/// Maximum allowed frame body size in bytes.
+///
+/// The frame size is read from a peer-controlled `u32`. Without an upper bound,
+/// a malicious or buggy peer could request an allocation up to ~4 GiB, causing
+/// an out-of-memory abort inside the injected DLL (which would take down the
+/// host game). Cap the size at a generous-but-sane 64 MiB; any frame larger than
+/// this is rejected before any allocation is performed.
+pub const MAX_FRAME: u32 = 64 * 1024 * 1024;
+
 /// Describes a frame header for IPC communication.
 #[derive(Debug, Clone, Copy)]
 pub struct Frame {
@@ -53,10 +66,20 @@ pub struct Frame {
 
 impl Frame {
     /// Reads a frame header from the given async reader.
+    ///
+    /// Rejects frames whose advertised body size exceeds [`MAX_FRAME`] *before*
+    /// any allocation is performed by the caller, preventing an unbounded
+    /// peer-controlled allocation.
     pub async fn read(mut r: impl AsyncRead + Unpin) -> io::Result<Self> {
-        Ok(Self {
-            size: r.read_u32().await?,
-        })
+        let size = r.read_u32().await?;
+        if size > MAX_FRAME {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("frame size {size} exceeds maximum allowed {MAX_FRAME}"),
+            ));
+        }
+
+        Ok(Self { size })
     }
 
     /// Writes the frame header to the given async writer.

@@ -1,17 +1,17 @@
 {
-  "name": "asdf-overlay",
-  "description": "Asdf overlay",
+  "name": "yourgg-overlay",
+  "description": "YOUR.GG overlay",
   "private": true,
   "type": "module",
   "author": "storycraft <storycraft@pancake.sh>",
   "license": "MIT OR Apache-2.0",
-  "homepage": "https://github.com/storycraft/asdf-overlay#readme",
+  "homepage": "https://github.com/your-gg/yourgg-overlay#readme",
   "bugs": {
-    "url": "https://github.com/storycraft/asdf-overlay/issues"
+    "url": "https://github.com/your-gg/yourgg-overlay/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/storycraft/asdf-overlay"
+    "url": "https://github.com/your-gg/yourgg-overlay"
   },
   "scripts": {
     "test": "pnpm -r test && cargo test",
@@ -20,7 +20,7 @@
     "build": "pnpm -r build",
     "doc": "mdbook build ./doc",
     "ci:deploy": "pnpm -r build",
-    "ci:publish": "pnpm -r build:dist && pnpm publish -r --access public"
+    "ci:publish": "pnpm -r build:dist && pnpm publish -r --no-git-checks"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",

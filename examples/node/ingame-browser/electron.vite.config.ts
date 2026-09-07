@@ -8,7 +8,7 @@ export default defineConfig({
       },
       rollupOptions: {
         external: [
-          '@asdf-overlay/core',
+          '@your-gg/yourgg-core',
         ],
       },
     },

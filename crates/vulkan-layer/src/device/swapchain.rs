@@ -2,7 +2,7 @@ use asdf_overlay::backend::Backends;
 use ash::vk::{self, AllocationCallbacks, Handle};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
-use tracing::{debug, trace};
+use tracing::{debug, error, trace};
 
 use crate::{
     device::DISPATCH_TABLE, instance::surface::get_surface_hwnd, map::IntDashMap,
@@ -50,12 +50,12 @@ pub(super) extern "system" fn create_swapchain(
         cleanup_swapchain(info.old_swapchain);
     }
 
+    let Some(table) = DISPATCH_TABLE.get(&device.as_raw()) else {
+        error!("missing dispatch table for vkCreateSwapchainKHR");
+        return vk::Result::ERROR_INITIALIZATION_FAILED;
+    };
     let res = unsafe {
-        (DISPATCH_TABLE
-            .get(&device.as_raw())
-            .unwrap()
-            .swapchain_fn
-            .create_swapchain_khr)(device, create_info, callback, swapchain)
+        (table.swapchain_fn.create_swapchain_khr)(device, create_info, callback, swapchain)
     };
     if res != vk::Result::SUCCESS {
         return res;
@@ -63,7 +63,12 @@ pub(super) extern "system" fn create_swapchain(
 
     debug!("initializing swapchain data");
     let swapchain = unsafe { *swapchain }.as_raw();
-    let hwnd = get_surface_hwnd(info.surface).unwrap();
+    // The real swapchain has already been created above; if we cannot resolve
+    // the surface HWND just skip overlay registration and report success.
+    let Some(hwnd) = get_surface_hwnd(info.surface) else {
+        error!("missing surface hwnd; skipping overlay registration for swapchain");
+        return vk::Result::SUCCESS;
+    };
     SWAPCHAIN_MAP.insert(
         swapchain,
         SwapchainData {
@@ -85,7 +90,11 @@ pub(super) extern "system" fn destroy_swapchain(
 ) {
     trace!("vkDestroySwapchainKHR called");
 
-    let table = DISPATCH_TABLE.get(&device.as_raw()).unwrap();
+    let Some(table) = DISPATCH_TABLE.get(&device.as_raw()) else {
+        error!("missing dispatch table for vkDestroySwapchainKHR");
+        cleanup_swapchain(swapchain);
+        return;
+    };
     cleanup_swapchain(swapchain);
 
     unsafe { (table.swapchain_fn.destroy_swapchain_khr)(device, swapchain, callback) }
@@ -101,4 +110,8 @@ fn cleanup_swapchain(swapchain: vk::SwapchainKHR) {
             render.invalidate_surface();
         });
     });
+
+    // M8: drop the SWAPCHAIN_MAP entry so it does not leak across
+    // swapchain recreation and destruction.
+    SWAPCHAIN_MAP.remove(&swapchain.as_raw());
 }

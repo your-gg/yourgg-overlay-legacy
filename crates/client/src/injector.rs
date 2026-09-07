@@ -1,277 +1,239 @@
-//! Injector module for injecting overlay DLL into target process.
+//! Injector module for injecting the overlay DLL into a target process.
 //!
-//! Uses the most typical DLL injection method of creating a remote thread that requires least permissions.
+//! Uses `SetWindowsHookEx(WH_GETMESSAGE)` so the OS maps the DLL into the
+//! target on our behalf. This needs no `PROCESS_VM_WRITE` / `PROCESS_CREATE_THREAD`
+//! handle to the target, so — unlike classic remote-thread injection — it is not
+//! blocked by kernel anti-cheats (e.g. Vanguard), which deny those access rights
+//! on the protected process (that denial is what makes the remote-thread path
+//! fail with `STATUS_ACCESS_DENIED` / `0xC0000022`).
+//!
+//! The overlay DLL is loaded into *this* (injector) process only to obtain the
+//! hook procedure; it stays inert here because it initializes the overlay from
+//! its hook proc, which only fires inside the target. See `asdf-overlay-dll`.
 
 use core::{mem, time::Duration};
-use std::{ffi::OsStr, fs, os::windows::ffi::OsStrExt, path::PathBuf};
+use std::{os::windows::ffi::OsStrExt, path::Path};
 
 use anyhow::{Context, bail};
-use goblin::pe::PE;
-use ntapi::{
-    ntapi_base::CLIENT_ID,
-    ntmmapi::{NtAllocateVirtualMemory, NtFreeVirtualMemory, NtWriteVirtualMemory},
-    ntpsapi::NtOpenProcess,
-    ntrtl::{PUSER_THREAD_START_ROUTINE, RtlCreateUserThread},
-};
 use scopeguard::defer;
 use windows::{
-    Wdk::Foundation::OBJECT_ATTRIBUTES,
     Win32::{
-        Foundation::{CloseHandle, HANDLE, HMODULE, MAX_PATH, NTSTATUS, WAIT_TIMEOUT},
+        Foundation::{CloseHandle, FILETIME, HANDLE, HINSTANCE, HWND, LPARAM, WPARAM},
         System::{
-            Memory::{MEM_COMMIT, MEM_RELEASE, PAGE_EXECUTE_READWRITE},
-            ProcessStatus::{EnumProcessModulesEx, GetModuleBaseNameA, LIST_MODULES_ALL},
+            LibraryLoader::{GetProcAddress, LoadLibraryW},
             SystemInformation::{
-                GetSystemWow64DirectoryA, IMAGE_FILE_MACHINE, IMAGE_FILE_MACHINE_AMD64,
-                IMAGE_FILE_MACHINE_ARM64, IMAGE_FILE_MACHINE_I386, IMAGE_FILE_MACHINE_UNKNOWN,
+                IMAGE_FILE_MACHINE, IMAGE_FILE_MACHINE_AMD64, IMAGE_FILE_MACHINE_ARM64,
+                IMAGE_FILE_MACHINE_I386, IMAGE_FILE_MACHINE_UNKNOWN,
             },
             Threading::{
-                GetCurrentProcess, GetExitCodeThread, IsWow64Process2, PROCESS_CREATE_THREAD,
-                PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_OPERATION, PROCESS_VM_READ,
-                PROCESS_VM_WRITE, WaitForSingleObject,
+                GetCurrentProcess, GetProcessIdOfThread, GetProcessTimes, IsWow64Process2,
+                OpenProcess, OpenThread, PROCESS_QUERY_LIMITED_INFORMATION,
+                THREAD_QUERY_LIMITED_INFORMATION,
             },
         },
+        UI::WindowsAndMessaging::{
+            EnumWindows, GetWindowThreadProcessId, HOOKPROC, IsWindowVisible, PostThreadMessageW,
+            SetWindowsHookExW, WH_GETMESSAGE, WM_NULL,
+        },
     },
-    core::PCSTR,
+    core::{BOOL, PCWSTR, s},
 };
-
-windows::core::link!(
-    "kernel32.dll" "system" fn LoadLibraryW(lplibfilename: PCSTR) -> HMODULE
-);
 
 use crate::OverlayDll;
 
-/// Inject overlay DLL into target process and returns the module handle of the injected DLL.
+/// Inject the overlay DLL into the target process via `SetWindowsHookEx`.
 ///
-/// Note that returned module handle is truncated to u32 and may not point to the actual module handle.
-pub fn inject(pid: u32, dll: OverlayDll, timeout: Option<Duration>) -> anyhow::Result<u32> {
-    let mut handle = HANDLE(0 as _);
-    unsafe {
-        let mut attr = OBJECT_ATTRIBUTES {
-            Length: mem::size_of::<OBJECT_ATTRIBUTES>() as _,
-            ..Default::default()
-        };
+/// On success the DLL has been registered as a `WH_GETMESSAGE` hook on a GUI
+/// thread of the target and nudged to load; it then starts its IPC server and
+/// pins itself. The hook is intentionally left installed for the session.
+pub fn inject(pid: u32, dll: OverlayDll, _timeout: Option<Duration>) -> anyhow::Result<()> {
+    let current = current_arch();
 
-        // NtOpenProcess is more permissive
-        NTSTATUS(NtOpenProcess(
-            &mut handle as *mut _ as _,
-            (PROCESS_QUERY_LIMITED_INFORMATION
-                | PROCESS_CREATE_THREAD
-                | PROCESS_VM_OPERATION
-                | PROCESS_VM_READ
-                | PROCESS_VM_WRITE)
-                .0,
-            &mut attr as *mut _ as _,
-            &mut CLIENT_ID {
-                UniqueProcess: pid as _,
-                UniqueThread: 0 as _,
-            },
-        ))
-        .ok()
-        .context("cannot open process")?;
+    // `SetWindowsHookEx` requires the hook DLL to match the *target* process
+    // arch, and we must load that DLL into our own process to register it. So
+    // only same-arch injection is supported here; cross-arch needs a
+    // matching-arch helper executable (not yet implemented).
+    let target = target_arch(pid)?;
+    if target != current {
+        bail!(
+            "cross-arch injection (injector {}, target {}) requires a same-arch helper exe (not implemented)",
+            current.0,
+            target.0,
+        );
+    }
+
+    let dll_path: &Path = match current {
+        IMAGE_FILE_MACHINE_AMD64 => dll.x64.context("x64 dll path is not provided")?,
+        IMAGE_FILE_MACHINE_ARM64 => dll.arm64.context("arm64 dll path is not provided")?,
+        IMAGE_FILE_MACHINE_I386 => dll.x86.context("x86 dll path is not provided")?,
+        arch => bail!("Unsupported injector arch: {}", arch.0),
     };
+
+    // Load the overlay DLL into the injector process to obtain the hook proc.
+    // It does NOT start an overlay here — it only initializes when its hook proc
+    // fires inside the target process (see `asdf-overlay-dll`).
+    let wide: Vec<u16> = dll_path.as_os_str().encode_wide().chain([0]).collect();
+    let hmod = unsafe { LoadLibraryW(PCWSTR(wide.as_ptr())) }
+        .context("failed to load overlay dll in injector process")?;
+
+    let proc = unsafe { GetProcAddress(hmod, s!("msg_hook_proc")) }
+        .context("overlay dll is missing the `msg_hook_proc` export")?;
+    let hook_proc: HOOKPROC = Some(unsafe { mem::transmute(proc) });
+
+    let thread = find_gui_thread(pid)
+        .context("cannot find a GUI thread (visible top-level window) in target process")?;
+
+    // Capture a strong identity (process creation time) for the target at
+    // discovery time. PIDs are recycled by the OS, so the bare `pid`/`thread`
+    // discovered above could, by the time we hook, belong to a *different*
+    // process that reused the same numeric id. The creation time pins the exact
+    // process instance and lets us detect such a reuse before we act on it.
+    let creation_time = process_creation_time(pid)
+        .context("cannot read target process creation time for identity check")?;
+
+    // Re-validate immediately before hooking: the thread must still belong to a
+    // live process with the same pid *and* the same creation time. This closes
+    // the time-of-check/time-of-use gap between discovery and `SetWindowsHookExW`
+    // (target exited / pid recycled into an unrelated process).
+    validate_thread_identity(thread, pid, creation_time)
+        .context("target process changed between discovery and injection; aborting")?;
+
+    // Register the hook; the OS maps the DLL into the target process.
+    unsafe {
+        SetWindowsHookExW(WH_GETMESSAGE, hook_proc, Some(HINSTANCE(hmod.0)), thread)
+            .context("SetWindowsHookExW failed")?;
+    }
+    // Nudge the target thread's message queue so the hook fires now, mapping and
+    // initializing the DLL promptly instead of on the next user input.
+    unsafe {
+        _ = PostThreadMessageW(thread, WM_NULL, WPARAM(0), LPARAM(0));
+    }
+
+    Ok(())
+}
+
+/// Architecture of the current (injector) process.
+fn current_arch() -> IMAGE_FILE_MACHINE {
+    process_arch(unsafe { GetCurrentProcess() })
+}
+
+/// Architecture of the target process. Opens it with
+/// `PROCESS_QUERY_LIMITED_INFORMATION` only — an access level permitted even on
+/// Vanguard-protected processes.
+fn target_arch(pid: u32) -> anyhow::Result<IMAGE_FILE_MACHINE> {
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
+        .context("cannot open target process for arch query")?;
+    defer!(unsafe {
+        _ = CloseHandle(handle);
+    });
+    Ok(process_arch(handle))
+}
+
+/// Read the creation time of `pid` as a strong, recycle-proof identity.
+///
+/// PIDs are reused; the (pid, creation-time) pair uniquely identifies a process
+/// instance. Opens the process with `PROCESS_QUERY_LIMITED_INFORMATION` only —
+/// an access level permitted even on Vanguard-protected processes.
+fn process_creation_time(pid: u32) -> anyhow::Result<u64> {
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
+        .context("cannot open target process for creation-time query")?;
     defer!(unsafe {
         _ = CloseHandle(handle);
     });
 
-    let target_arch = get_process_arch(handle);
-    let current_arch = get_process_arch(unsafe { GetCurrentProcess() });
-
-    let path = match target_arch {
-        IMAGE_FILE_MACHINE_AMD64 => dll.x64.context("x64 dll path is not provided")?,
-        IMAGE_FILE_MACHINE_I386 => dll.x86.context("x86 dll path is not provided")?,
-        IMAGE_FILE_MACHINE_ARM64 => dll.arm64.context("arm64 dll path is not provided")?,
-        arch => bail!("Unsupported arch: {}", arch.0),
-    };
-
-    execute_remote_fn(
-        handle,
-        load_library_w_for(handle, target_arch, current_arch)
-            .context("cannot find LoadLibraryW")?,
-        path.as_os_str(),
-        timeout,
-    )
-}
-
-/// Get the architecture of the target process handle.
-fn get_process_arch(handle: HANDLE) -> IMAGE_FILE_MACHINE {
-    let mut native_output = IMAGE_FILE_MACHINE_UNKNOWN;
-    let mut wow64_output = IMAGE_FILE_MACHINE_UNKNOWN;
+    let mut creation = FILETIME::default();
+    let (mut exit, mut kernel, mut user) =
+        (FILETIME::default(), FILETIME::default(), FILETIME::default());
     unsafe {
-        _ = IsWow64Process2(handle, &mut wow64_output, Some(&mut native_output));
+        GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user)
+            .context("GetProcessTimes failed for target process")?;
     }
 
-    if wow64_output != IMAGE_FILE_MACHINE_UNKNOWN {
-        wow64_output
-    } else {
-        native_output
-    }
+    Ok(filetime_to_u64(creation))
 }
 
-/// Get the address of LoadLibraryW in the target process.
-fn load_library_w_for(
-    process: HANDLE,
-    target_arch: IMAGE_FILE_MACHINE,
-    process_arch: IMAGE_FILE_MACHINE,
-) -> anyhow::Result<usize> {
-    if target_arch == process_arch {
-        Ok(LoadLibraryW as *const () as usize)
-    } else {
-        match (process_arch, target_arch) {
-            (IMAGE_FILE_MACHINE_I386, IMAGE_FILE_MACHINE_AMD64) => {
-                bail!("cannot inject to x64 process from x86 process")
-            }
+/// Verify the discovered `thread` still belongs to a live process that is the
+/// *same* instance as the one discovered (matching `pid` and `expected_creation`
+/// creation time). Bails if the thread is gone, now owned by a different pid, or
+/// the pid has been recycled into an unrelated process. This guards against the
+/// time-of-check/time-of-use gap before `SetWindowsHookExW`.
+fn validate_thread_identity(thread: u32, pid: u32, expected_creation: u64) -> anyhow::Result<()> {
+    // Open the thread by id and resolve its *current* owning process. If the
+    // thread has exited, this open fails and we bail — exactly what we want.
+    let thandle = unsafe { OpenThread(THREAD_QUERY_LIMITED_INFORMATION, false, thread) }
+        .context("target GUI thread no longer exists")?;
+    defer!(unsafe {
+        _ = CloseHandle(thandle);
+    });
 
-            // wow64 x86
-            (_, IMAGE_FILE_MACHINE_I386) => {
-                let mut kernel32_path = unsafe {
-                    let size = GetSystemWow64DirectoryA(None);
-                    let mut buf = vec![0u8; size as _];
-                    GetSystemWow64DirectoryA(Some(&mut buf));
-                    // pop nul
-                    buf.pop();
-                    PathBuf::from(str::from_utf8(&buf)?)
-                };
-                kernel32_path.push("kernel32.dll");
-
-                let data = fs::read(&kernel32_path)?;
-                let pe = PE::parse(&data)?;
-                let ex = pe
-                    .exports
-                    .iter()
-                    .find(|ex| matches!(ex.name, Some("LoadLibraryW")))
-                    .context("cannot find LoadLibraryW exports")?;
-
-                let mut mod_list = vec![HMODULE::default(); 1024];
-                let mut cb_size = 0;
-                unsafe {
-                    EnumProcessModulesEx(
-                        process,
-                        mod_list.as_mut_ptr(),
-                        (mod_list.len() * mem::size_of::<HMODULE>()) as u32,
-                        &mut cb_size,
-                        LIST_MODULES_ALL,
-                    )?;
-                };
-                mod_list.truncate(cb_size as usize / mem::size_of::<HMODULE>());
-
-                let target_kernel32_base = {
-                    let mut buf = [0_u8; MAX_PATH as usize + 1];
-
-                    mod_list
-                        .into_iter()
-                        .find({
-                            |module| unsafe {
-                                let len = GetModuleBaseNameA(process, Some(*module), &mut buf);
-                                str::from_utf8(&buf[..len as usize])
-                                    .map(|path| path.eq_ignore_ascii_case("kernel32.dll"))
-                                    .unwrap_or(false)
-                            }
-                        })
-                        .context("cannot find kernel32.dll in target process")?
-                };
-
-                Ok(ex.rva + target_kernel32_base.0 as usize)
-            }
-
-            // x64 on arm64
-            (IMAGE_FILE_MACHINE_ARM64, IMAGE_FILE_MACHINE_AMD64) => {
-                Ok(LoadLibraryW as *const () as usize)
-            }
-
-            (current_arch, target_arch) => {
-                bail!(
-                    "Unsupported target arch: {}, current arch: {}",
-                    target_arch.0,
-                    current_arch.0
-                );
-            }
-        }
+    let owner = unsafe { GetProcessIdOfThread(thandle) };
+    if owner == 0 {
+        bail!("cannot resolve owning process of target GUI thread");
     }
-}
-
-/// Execute a function to the target process by creating a remote thread.
-fn execute_remote_fn(
-    process: HANDLE,
-    f: usize,
-    param: &OsStr,
-    timeout: Option<Duration>,
-) -> anyhow::Result<u32> {
-    let param_encoded = param.encode_wide().collect::<Vec<u16>>();
-    let param_encoded = bytemuck::cast_slice::<_, u8>(&param_encoded);
-
-    unsafe {
-        let mut base_addr = 0_usize;
-        let mut region_size = param_encoded.len();
-        // allocate rw page
-        NTSTATUS(NtAllocateVirtualMemory(
-            process.0 as _,
-            &raw mut base_addr as _,
-            0,
-            &mut region_size,
-            MEM_COMMIT.0,
-            PAGE_EXECUTE_READWRITE.0,
-        ))
-        .ok()?;
-        // free memory on exit
-        defer!({
-            let mut base_addr = base_addr;
-            _ = NtFreeVirtualMemory(
-                process.0 as _,
-                &raw mut base_addr as _,
-                &mut 0_usize as *mut _,
-                MEM_RELEASE.0,
-            );
-        });
-
-        // write dll path
-        NTSTATUS(NtWriteVirtualMemory(
-            process.0 as _,
-            base_addr as _,
-            param_encoded.as_ptr() as _,
-            param_encoded.len(),
-            0 as _,
-        ))
-        .ok()?;
-
-        let mut thread_handle: HANDLE = HANDLE::default();
-        // create a user thread in the process and execute LoadLibraryW
-        NTSTATUS(RtlCreateUserThread(
-            process.0 as _,
-            0 as _,
-            0,
-            0,
-            0,
-            0,
-            mem::transmute::<usize, PUSER_THREAD_START_ROUTINE>(f),
-            base_addr as _,
-            &mut thread_handle as *mut _ as _,
-            0 as _,
-        ))
-        .ok()?;
-        // cleanup thread handle
-        defer!({
-            _ = CloseHandle(thread_handle);
-        });
-
-        // wait for overlay dll to start
-        let res = WaitForSingleObject(
-            thread_handle,
-            timeout
-                .map(|duration| duration.as_millis() as u32)
-                .unwrap_or(u32::MAX),
+    if owner != pid {
+        bail!(
+            "target GUI thread now belongs to pid {owner}, expected {pid} (pid recycled or thread reassigned)",
         );
-        if res == WAIT_TIMEOUT {
-            bail!("remote thread wait timeout");
-        }
-
-        let mut module_handle = 0_u32;
-        // Get loaded module handle
-        GetExitCodeThread(thread_handle, &mut module_handle)?;
-        if module_handle == 0 {
-            bail!("failed to load overlay DLL");
-        }
-
-        Ok(module_handle)
     }
+
+    // Same pid is not enough — the pid itself could have been recycled. Confirm
+    // the creation time still matches the instance we discovered.
+    let creation = process_creation_time(pid)
+        .context("cannot re-read target creation time for identity check")?;
+    if creation != expected_creation {
+        bail!(
+            "target pid {pid} was recycled (creation time changed) between discovery and injection",
+        );
+    }
+
+    Ok(())
+}
+
+/// Flatten a [`FILETIME`] into a single 64-bit tick count for comparison.
+fn filetime_to_u64(ft: FILETIME) -> u64 {
+    ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64)
+}
+
+/// Get the architecture of a process handle (resolving WOW64).
+fn process_arch(handle: HANDLE) -> IMAGE_FILE_MACHINE {
+    let mut native = IMAGE_FILE_MACHINE_UNKNOWN;
+    let mut wow64 = IMAGE_FILE_MACHINE_UNKNOWN;
+    unsafe {
+        _ = IsWow64Process2(handle, &mut wow64, Some(&mut native));
+    }
+
+    if wow64 != IMAGE_FILE_MACHINE_UNKNOWN {
+        wow64
+    } else {
+        native
+    }
+}
+
+/// Context passed to the [`EnumWindows`] callback to collect a target thread.
+struct FindThread {
+    pid: u32,
+    thread: u32,
+}
+
+unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let ctx = unsafe { &mut *(lparam.0 as *mut FindThread) };
+
+    let mut window_pid = 0u32;
+    let tid = unsafe { GetWindowThreadProcessId(hwnd, Some(&mut window_pid)) };
+    if tid != 0 && window_pid == ctx.pid && unsafe { IsWindowVisible(hwnd) }.as_bool() {
+        ctx.thread = tid;
+        // Stop enumerating.
+        return BOOL(0);
+    }
+
+    BOOL(1)
+}
+
+/// Find a thread in `pid` that owns a visible top-level window, so it pumps
+/// messages (which `WH_GETMESSAGE` requires to deliver the hook).
+fn find_gui_thread(pid: u32) -> Option<u32> {
+    let mut ctx = FindThread { pid, thread: 0 };
+    // `EnumWindows` returns `Err` when our callback stops it early; expected.
+    _ = unsafe { EnumWindows(Some(enum_windows_proc), LPARAM(&mut ctx as *mut _ as isize)) };
+    (ctx.thread != 0).then_some(ctx.thread)
 }

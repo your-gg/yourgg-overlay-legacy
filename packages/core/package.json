@@ -1,25 +1,29 @@
 {
-  "name": "@asdf-overlay/core",
-  "version": "1.2.3",
-  "description": "Asdf overlay core Node addon",
+  "name": "@your-gg/yourgg-core",
+  "version": "2.0.0",
+  "description": "YOUR.GG overlay core Node addon",
   "main": "./lib/index.js",
   "type": "module",
   "author": "storycraft <storycraft@pancake.sh>",
-  "homepage": "https://github.com/storycraft/asdf-overlay#readme",
+  "homepage": "https://github.com/your-gg/yourgg-core#readme",
   "license": "MIT OR Apache-2.0",
   "bugs": {
-    "url": "https://github.com/storycraft/asdf-overlay/issues"
+    "url": "https://github.com/your-gg/yourgg-core/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/storycraft/asdf-overlay"
+    "url": "https://github.com/your-gg/yourgg-core"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
   },
   "scripts": {
     "build-dll": "cargo xtask build-dll --",
+    "build-injector": "cargo xtask build-injector --",
     "cargo-build": "cargo xtask build-node --",
-    "build:debug": "npm run cargo-build && npm run build-dll && tsc",
+    "build:debug": "npm run cargo-build && npm run build-dll && npm run build-injector && tsc",
     "build:dist": "tsc",
-    "build": "npm run cargo-build -- --release && npm run build-dll -- --release && npm run build:dist"
+    "build": "npm run cargo-build -- --release && npm run build-dll -- --release && npm run build-injector -- --release && npm run build:dist"
   },
   "os": [
     "win32"
@@ -43,9 +47,10 @@
     "lib/**/*",
     "addon-x64.node",
     "addon-aarch64.node",
-    "asdf_overlay-x64.dll",
-    "asdf_overlay-x86.dll",
-    "asdf_overlay-aarch64.dll"
+    "yourgg_overlay-x64.dll",
+    "yourgg_overlay-x86.dll",
+    "yourgg_overlay-aarch64.dll",
+    "yourgg-injector-x64.exe"
   ],
   "devDependencies": {
     "@types/node": "^25.6.0",

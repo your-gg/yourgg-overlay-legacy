@@ -44,6 +44,7 @@ features = [
     "Win32_System_SystemServices",
     "Win32_System_SystemInformation",
     "Win32_System_Memory",
+    "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics",
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",

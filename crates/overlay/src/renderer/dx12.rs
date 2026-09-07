@@ -120,6 +120,12 @@ pub struct Dx12Renderer {
     texture_descriptor: ID3D12DescriptorHeap,
 
     command_list: [(ID3D12GraphicsCommandList, ID3D12CommandAllocator); MAX_RENDER_TARGETS],
+    /// Fence value last submitted for each backbuffer-index command allocator.
+    ///
+    /// Used to wait for that allocator's prior submission to retire on the GPU
+    /// before resetting it (single monotonic fence), avoiding a reset of an
+    /// in-flight allocator.
+    saved_fence_val: [u64; MAX_RENDER_TARGETS],
     fence: RendererFence,
 }
 
@@ -200,6 +206,7 @@ impl Dx12Renderer {
                 texture_descriptor,
 
                 command_list,
+                saved_fence_val: [0; MAX_RENDER_TARGETS],
                 fence: RendererFence::new(device)?,
             })
         }
@@ -276,13 +283,27 @@ impl Dx12Renderer {
             -(size.1 as f32 / screen.1 as f32) * 2.0,
         ];
 
+        // `command_list` (and `saved_fence_val`) is a fixed array of
+        // MAX_RENDER_TARGETS, but DXGI BufferCount can be larger than that, so
+        // `GetCurrentBackBufferIndex()` may return an index out of range. Skip
+        // drawing rather than indexing out of bounds.
+        let index = backbuffer_index as usize;
+        let Some((command_list, command_alloc)) = self.command_list.get(index) else {
+            return Ok(());
+        };
+        let command_list = command_list.clone();
+        let command_alloc = command_alloc.clone();
+
+        // Wait for this allocator's previous submission to retire on the GPU
+        // before resetting it (single monotonic fence shared by all
+        // allocators). Bounded so a GPU hang cannot freeze this thread.
+        self.fence.wait_value(self.saved_fence_val[index])?;
+
         unsafe {
             let backbuffer = swapchain.GetBuffer::<ID3D12Resource>(backbuffer_index)?;
-            let (ref command_list, ref command_alloc) =
-                self.command_list[backbuffer_index as usize];
 
             command_alloc.Reset()?;
-            command_list.Reset(command_alloc, &self.pipeline)?;
+            command_list.Reset(&command_alloc, &self.pipeline)?;
 
             command_list.SetGraphicsRootSignature(&self.sig);
             command_list.SetGraphicsRoot32BitConstants(0, 4, rect.as_ptr().cast(), 0);
@@ -328,6 +349,9 @@ impl Dx12Renderer {
             original_execute_command_lists(queue, &[Some(command_list.clone().into())]);
         }
         self.fence.register(queue)?;
+        // Record the fence value gating this allocator's submission so the next
+        // Reset for this backbuffer index waits for it to retire (D6).
+        self.saved_fence_val[index] = self.fence.current_value();
 
         Ok(())
     }
@@ -335,7 +359,8 @@ impl Dx12Renderer {
 
 impl Drop for Dx12Renderer {
     fn drop(&mut self) {
-        self.fence.wait_pending().expect("error while waiting gpu");
+        // Never panic in Drop: a panic in the injected DLL aborts the host game.
+        let _ = self.fence.wait_pending();
     }
 }
 

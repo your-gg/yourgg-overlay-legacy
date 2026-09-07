@@ -60,16 +60,19 @@ extern "system" fn hooked_present(
     trace!("IDirect3DDevice9::Present called");
 
     if OverlayEventSink::connected() {
-        let device = unsafe { IDirect3DDevice9::from_raw_borrowed(&this) }.unwrap();
-        let mut hwnd = dest_window_override;
-        if hwnd.is_invalid() {
-            let swapchain = unsafe { device.GetSwapChain(0) }.unwrap();
-            let mut params = D3DPRESENT_PARAMETERS::default();
-            unsafe { swapchain.GetPresentParameters(&mut params) }.unwrap();
-            hwnd = params.hDeviceWindow;
-        }
-        if !hwnd.is_invalid() {
-            draw_overlay(hwnd, device);
+        if let Some(device) = unsafe { IDirect3DDevice9::from_raw_borrowed(&this) } {
+            let mut hwnd = dest_window_override;
+            if hwnd.is_invalid() {
+                if let Ok(swapchain) = unsafe { device.GetSwapChain(0) } {
+                    let mut params = D3DPRESENT_PARAMETERS::default();
+                    if unsafe { swapchain.GetPresentParameters(&mut params) }.is_ok() {
+                        hwnd = params.hDeviceWindow;
+                    }
+                }
+            }
+            if !hwnd.is_invalid() {
+                draw_overlay(hwnd, device);
+            }
         }
     }
 
@@ -95,16 +98,19 @@ extern "system" fn hooked_swapchain_present(
 ) -> HRESULT {
     trace!("IDirect3DSwapChain9::Present called");
 
-    let swapchain = unsafe { IDirect3DSwapChain9::from_raw_borrowed(&this) }.unwrap();
-    let device = unsafe { swapchain.GetDevice() }.unwrap();
-    let mut hwnd = dest_window_override;
-    if hwnd.is_invalid() {
-        let mut params = D3DPRESENT_PARAMETERS::default();
-        unsafe { swapchain.GetPresentParameters(&mut params) }.unwrap();
-        hwnd = params.hDeviceWindow;
-    }
-    if !hwnd.is_invalid() {
-        draw_overlay(hwnd, &device);
+    if let Some(swapchain) = unsafe { IDirect3DSwapChain9::from_raw_borrowed(&this) } {
+        if let Ok(device) = unsafe { swapchain.GetDevice() } {
+            let mut hwnd = dest_window_override;
+            if hwnd.is_invalid() {
+                let mut params = D3DPRESENT_PARAMETERS::default();
+                if unsafe { swapchain.GetPresentParameters(&mut params) }.is_ok() {
+                    hwnd = params.hDeviceWindow;
+                }
+            }
+            if !hwnd.is_invalid() {
+                draw_overlay(hwnd, &device);
+            }
+        }
     }
 
     unsafe {
@@ -145,16 +151,19 @@ extern "system" fn hooked_present_ex(
     trace!("IDirect3DDevice9Ex::PresentEx called");
 
     if OverlayEventSink::connected() {
-        let device = unsafe { IDirect3DDevice9::from_raw_borrowed(&this) }.unwrap();
-        let mut hwnd = dest_window_override;
-        if hwnd.is_invalid() {
-            let swapchain = unsafe { device.GetSwapChain(0) }.unwrap();
-            let mut params = D3DPRESENT_PARAMETERS::default();
-            unsafe { swapchain.GetPresentParameters(&mut params) }.unwrap();
-            hwnd = params.hDeviceWindow;
-        }
-        if !hwnd.is_invalid() {
-            draw_overlay(hwnd, device);
+        if let Some(device) = unsafe { IDirect3DDevice9::from_raw_borrowed(&this) } {
+            let mut hwnd = dest_window_override;
+            if hwnd.is_invalid() {
+                if let Ok(swapchain) = unsafe { device.GetSwapChain(0) } {
+                    let mut params = D3DPRESENT_PARAMETERS::default();
+                    if unsafe { swapchain.GetPresentParameters(&mut params) }.is_ok() {
+                        hwnd = params.hDeviceWindow;
+                    }
+                }
+            }
+            if !hwnd.is_invalid() {
+                draw_overlay(hwnd, device);
+            }
         }
     }
 
@@ -370,7 +379,7 @@ fn get_addr(
         device.context("cannot create IDirect3DDevice9")?
     };
 
-    let swapchain = unsafe { device.GetSwapChain(0) }.unwrap();
+    let swapchain = unsafe { device.GetSwapChain(0) }.context("cannot get IDirect3DSwapChain9")?;
 
     let vtable = Interface::vtable(&*device);
     let present = vtable.Present;

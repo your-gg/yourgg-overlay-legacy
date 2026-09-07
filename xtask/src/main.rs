@@ -33,6 +33,16 @@ enum Action {
         #[arg(last(true))]
         cargo_args: Vec<String>,
     },
+    #[command(about = "Build out-of-process injector helper exe (x64)")]
+    BuildInjector {
+        /// Artifact output directory
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+
+        /// Addtional cargo arguments
+        #[arg(last(true))]
+        cargo_args: Vec<String>,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -43,7 +53,22 @@ fn main() -> anyhow::Result<()> {
         Action::BuildNode { out, cargo_args } => {
             build_node(out.as_deref().unwrap_or(Path::new(".")), &cargo_args)?
         }
+        Action::BuildInjector { out, cargo_args } => {
+            build_injector(out.as_deref().unwrap_or(Path::new(".")), &cargo_args)?
+        }
     }
+
+    Ok(())
+}
+
+fn build_injector(dir: &Path, cargo_args: &[String]) -> anyhow::Result<()> {
+    create_dir_all(dir)?;
+    // x64 only: League of Legends is x64, and the helper must match the target
+    // arch. Cross-arch helpers (x86/aarch64) are a future step.
+    let [x64_path] = cargo_artifacts(cargo_args, "injector-helper", ["x86_64-pc-windows-msvc"]);
+    let x64_path = x64_path.context("x86_64 injector build has no output")?;
+
+    fs::copy(x64_path, dir.join("yourgg-injector-x64.exe"))?;
 
     Ok(())
 }
@@ -79,9 +104,9 @@ fn build_dlls(dir: &Path, cargo_args: &[String]) -> anyhow::Result<()> {
     let x86_path = x86_path.context("i686 build has no output")?;
     let aarch64_path = aarch64_path.context("aarch64 build has no output")?;
 
-    fs::copy(x64_path, dir.join("asdf_overlay-x64.dll"))?;
-    fs::copy(x86_path, dir.join("asdf_overlay-x86.dll"))?;
-    fs::copy(aarch64_path, dir.join("asdf_overlay-aarch64.dll"))?;
+    fs::copy(x64_path, dir.join("yourgg_overlay-x64.dll"))?;
+    fs::copy(x86_path, dir.join("yourgg_overlay-x86.dll"))?;
+    fs::copy(aarch64_path, dir.join("yourgg_overlay-aarch64.dll"))?;
 
     Ok(())
 }

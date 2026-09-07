@@ -12,6 +12,13 @@ panic = "abort"
 
 [profile.release]
 panic = "abort"
+# Keep debug info so MSVC emits a PDB next to each cdylib/exe. The PDB is NOT
+# shipped in the binary (only a CodeView reference is) — it is uploaded to
+# Sentry in CI so native crashes in the injected DLL / addon / helper can be
+# symbolicated. `debug = 1` is line-tables-only (function + file:line), enough
+# for stack traces with no codegen/perf impact; `strip = false` keeps it.
+strip = false
+debug = 1
 
 [workspace.package]
 version = "1.2.3"

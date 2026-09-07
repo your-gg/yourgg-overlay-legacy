@@ -27,8 +27,16 @@ pub(super) extern "system" fn present(
 ) -> vk::Result {
     trace!("vkQueuePresentKHR called");
 
-    let queue_data = get_queue_data(queue).unwrap();
-    let mut table = DISPATCH_TABLE.get_mut(&queue_data.device.as_raw()).unwrap();
+    let Some(queue_data) = get_queue_data(queue) else {
+        // Without queue data we cannot reach the device dispatch table holding
+        // the real vkQueuePresentKHR pointer. Avoid aborting the host game.
+        error!("missing queue data for vkQueuePresentKHR; skipping overlay");
+        return vk::Result::ERROR_UNKNOWN;
+    };
+    let Some(mut table) = DISPATCH_TABLE.get_mut(&queue_data.device.as_raw()) else {
+        error!("missing dispatch table for vkQueuePresentKHR; skipping overlay");
+        return vk::Result::ERROR_UNKNOWN;
+    };
 
     if OverlayEventSink::connected() {
         let info = unsafe { &*info };
@@ -125,12 +133,12 @@ fn draw_overlay(
     };
 
     let mut renderer = data.renderer.lock();
-    let renderer = renderer.get_or_insert_with(|| {
+    if renderer.is_none() {
         debug!("initializing vulkan renderer");
 
         let mut image_count = 0;
         let mut images = Vec::<vk::Image>::new();
-        unsafe {
+        let images_res = unsafe {
             _ = (table.swapchain_fn.get_swapchain_images_khr)(
                 table.device.handle(),
                 swapchain,
@@ -146,21 +154,35 @@ fn draw_overlay(
                 images.as_mut_ptr(),
             )
             .result()
-            .expect("failed to get swapchain images");
         };
+        if let Err(err) = images_res {
+            error!("failed to get swapchain images. err: {err:?}");
+            return None;
+        }
 
-        VulkanRenderer::new(
+        match VulkanRenderer::new(
             table.device.clone(),
             queue_family_index,
             data.image_size,
             data.format,
             &images,
-        )
-        .expect("renderer creation failed")
-    });
+        ) {
+            Ok(new_renderer) => {
+                *renderer = Some(new_renderer);
+            }
+            Err(err) => {
+                error!("vulkan renderer creation failed. err: {err:?}");
+                return None;
+            }
+        }
+    }
+    let renderer = renderer.as_mut()?;
 
     if render.surface.invalidate_update() {
-        let props = get_physical_device_memory_properties(table.physical_device).unwrap();
+        let Some(props) = get_physical_device_memory_properties(table.physical_device) else {
+            error!("missing physical device memory properties; skipping overlay");
+            return None;
+        };
 
         if let Err(err) = renderer.update_texture(
             render.surface.get().map(|surface| surface.texture()),

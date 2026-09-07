@@ -5,23 +5,22 @@
   "license": "MIT OR Apache-2.0",
   "author": "storycraft <storycraft@pancake.sh>",
   "type": "module",
-  "homepage": "https://github.com/storycraft/asdf-overlay#readme",
+  "homepage": "https://github.com/your-gg/yourgg-overlay#readme",
   "bugs": {
-    "url": "https://github.com/storycraft/asdf-overlay/issues"
+    "url": "https://github.com/your-gg/yourgg-overlay/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/storycraft/asdf-overlay.git"
+    "url": "git+https://github.com/your-gg/yourgg-overlay.git"
   },
   "scripts": {
     "start": "electron-vite preview --",
     "dev": "electron-vite dev --"
   },
   "dependencies": {
-    "@asdf-overlay/core": "workspace:*",
-    "@asdf-overlay/electron": "workspace:*",
-    "electron": "^40.9.1",
-    "find-process": "^2.1.1"
+    "@your-gg/yourgg-core": "workspace:*",
+    "@your-gg/yourgg-overlay": "workspace:*",
+    "electron": "^40.9.1"
   },
   "devDependencies": {
     "electron-vite": "^5.0.0"

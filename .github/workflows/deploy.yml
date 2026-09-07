@@ -3,9 +3,10 @@ name: deploy
 on:
   workflow_call:
     inputs:
-      signing-policy:
+      sign:
         required: false
-        type: string
+        type: boolean
+        default: false
     outputs:
       unsigned-artifact-id:
         description: "Unsigned artifact Id"
@@ -14,17 +15,27 @@ on:
         description: "Signed artifact Id"
         value: ${{ jobs.deploy.outputs.signed-artifact-id }}
     secrets:
-      SIGNPATH_API_TOKEN:
-        required: true
+      AZURE_TENANT_ID:
+        required: false
+      AZURE_CLIENT_ID:
+        required: false
+      AZURE_CLIENT_SECRET:
+        required: false
+      AZURE_SIGNING_ENDPOINT:
+        required: false
+      AZURE_SIGNING_ACCOUNT:
+        required: false
+      AZURE_SIGNING_PROFILE:
+        required: false
+      SENTRY_AUTH_TOKEN:
+        required: false
   workflow_dispatch:
     inputs:
-      signing-policy:
-        type: choice
+      sign:
+        type: boolean
         required: false
-        description: Signing policy
-        options:
-          - 'test-signing'
-          - 'release-signing'
+        description: Sign artifacts
+        default: false
   pull_request:
     paths:
       - 'Cargo.toml'
@@ -34,6 +45,7 @@ on:
       - 'crates/**/*'
       - 'src/**/*'
       - 'xtask/**/*'
+      - 'packages/core/**'
 
 concurrency:
   group: deploy-${{ github.ref_name }}
@@ -42,7 +54,8 @@ concurrency:
 jobs:
   deploy:
     runs-on: windows-latest
-    environment: deploy
+    # PR CI: environment 없음. publish/수동 실행: deploy environment (yourgg only)
+    environment: ${{ github.event_name != 'pull_request' && 'deploy' || null }}
     outputs:
       unsigned-artifact-id: ${{ steps.upload-unsigned-artifact.outputs.artifact-id }}
       signed-artifact-id: ${{ steps.upload-signed-artifact.outputs.artifact-id }}
@@ -53,7 +66,7 @@ jobs:
 
       - name: Setup cd
         run: |
-          git config user.name "Asdf Overlay Continuous Deployment"
+          git config user.name "YOUR.GG Overlay Continuous Deployment"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Extract Commit SHA
@@ -77,7 +90,7 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 24
-          registry-url: 'https://registry.npmjs.org'
+          registry-url: 'https://npm.pkg.github.com'
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -86,36 +99,71 @@ jobs:
       - name: Deploy
         run: npm run ci:deploy
 
-      - name: Upload unsignd artifact
+      # Upload native debug symbols (PDBs) so Sentry can symbolicate crashes in
+      # the overlay DLL / addon / injector helper. Only on real (signed)
+      # releases — not PR CI — so we only ship symbols for user-facing binaries.
+      # sentry-cli scans each release dir and uploads every PE together with its
+      # PDB in one invocation (required to associate the debug identifier).
+      # MUST target the SAME Sentry project the consuming app's @sentry/electron
+      # sends crashes to, or they won't resolve.
+      - name: Upload debug files (PDB) to Sentry
+        if: ${{ inputs.sign }}
+        shell: bash
+        run: |
+          if [ -z "$SENTRY_AUTH_TOKEN" ]; then
+            echo "::error::SENTRY_AUTH_TOKEN is not set (needed to upload debug files)"
+            exit 1
+          fi
+          npx -y @sentry/cli debug-files upload --include-sources --wait \
+            target/x86_64-pc-windows-msvc/release \
+            target/i686-pc-windows-msvc/release \
+            target/aarch64-pc-windows-msvc/release
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+
+      - name: Upload unsigned artifact
         id: upload-unsigned-artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 'asdf-overlay-artifact-unsigned-${{ steps.commit-sha.outputs.short_sha }}'
+          name: 'yourgg-overlay-artifact-unsigned-${{ steps.commit-sha.outputs.short_sha }}'
           path: |
             packages/core/addon-aarch64.node
             packages/core/addon-x64.node
-            packages/core/asdf_overlay-aarch64.dll
-            packages/core/asdf_overlay-x86.dll
-            packages/core/asdf_overlay-x64.dll
+            packages/core/yourgg_overlay-aarch64.dll
+            packages/core/yourgg_overlay-x86.dll
+            packages/core/yourgg_overlay-x64.dll
+            packages/core/yourgg-injector-x64.exe
+
+      - name: Download unsigned artifact for signing
+        if: ${{ inputs.sign }}
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ steps.upload-unsigned-artifact.outputs.artifact-id }}
+          path: 'target/unsigned'
+          merge-multiple: true
 
       - name: Sign artifacts
-        if: ${{ inputs.signing-policy != '' }}
-        uses: signpath/github-action-submit-signing-request@v1.1
+        if: ${{ inputs.sign }}
+        uses: azure/artifact-signing-action@v1
         with:
-          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
-          organization-id: 'ce1cab5c-4a01-4210-a422-9f92bb175179'
-          project-slug: 'asdf-overlay'
-          signing-policy-slug: ${{ inputs.signing-policy }}
-          artifact-configuration-slug: 'github-action-deploy'
-          github-artifact-id: '${{ steps.upload-unsigned-artifact.outputs.artifact-id }}'
-          wait-for-completion: true
-          output-artifact-directory: 'target/out-signed-artifact'
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          files-folder: target/unsigned
+          files-folder-filter: dll,node,exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
 
       - name: Upload signed artifact
         id: upload-signed-artifact
-        if: ${{ inputs.signing-policy != '' }}
+        if: ${{ inputs.sign }}
         uses: actions/upload-artifact@v4
         with:
-          name: 'asdf-overlay-artifact-${{ steps.commit-sha.outputs.short_sha }}'
-          path: |
-            target/out-signed-artifact/**/*
+          name: 'yourgg-overlay-artifact-${{ steps.commit-sha.outputs.short_sha }}'
+          path: target/unsigned/**/*

@@ -85,7 +85,7 @@ impl SurfaceState {
         if self.updated {
             self.updated = false;
             Some(UpdateSharedHandle {
-                handle: self.get().map(|surface| surface.shared_handle()),
+                handle: self.get().and_then(|surface| surface.shared_handle()),
             })
         } else {
             None

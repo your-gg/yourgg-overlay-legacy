@@ -1,23 +1,27 @@
 {
-  "name": "@asdf-overlay/electron",
-  "version": "1.2.3",
-  "description": "Asdf overlay Electron integration",
+  "name": "@your-gg/yourgg-overlay",
+  "version": "2.0.0",
+  "description": "YOUR.GG overlay Electron integration",
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",
   "type": "module",
   "author": "storycraft <storycraft@pancake.sh>",
-  "homepage": "https://github.com/storycraft/asdf-overlay#readme",
+  "homepage": "https://github.com/your-gg/yourgg-overlay#readme",
   "license": "MIT OR Apache-2.0",
   "bugs": {
-    "url": "https://github.com/storycraft/asdf-overlay/issues"
+    "url": "https://github.com/your-gg/yourgg-overlay/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/storycraft/asdf-overlay"
+    "url": "https://github.com/your-gg/yourgg-overlay"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
   },
   "scripts": {
     "build:dist": "tsc",
-    "build": "npm run build:dist"
+    "build": "npm run build:dist",
+    "test": "npm run build:dist && node --test test/*.test.mjs"
   },
   "exports": {
     ".": {
@@ -37,7 +41,7 @@
     "typescript": "^6.0.3"
   },
   "peerDependencies": {
-    "@asdf-overlay/core": "workspace:*",
+    "@your-gg/yourgg-core": "workspace:*",
     "electron": "^40.1.0"
   },
   "packageManager": "pnpm@10.13.1"

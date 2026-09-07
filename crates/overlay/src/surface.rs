@@ -82,7 +82,10 @@ impl OverlaySurface {
 
     #[inline]
     /// Shared handle of the surface texture.
-    pub fn shared_handle(&self) -> NonZeroU32 {
-        NonZeroU32::new(unsafe { self.resource.GetSharedHandle().unwrap().0 as _ }).unwrap()
+    ///
+    /// Returns [`None`] if the shared handle cannot be retrieved or is null,
+    /// so callers can skip the surface update instead of panicking on the render thread.
+    pub fn shared_handle(&self) -> Option<NonZeroU32> {
+        NonZeroU32::new(unsafe { self.resource.GetSharedHandle().ok()?.0 as _ })
     }
 }

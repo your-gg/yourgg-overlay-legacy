@@ -15,7 +15,7 @@ use ash::{
     vk::{self, BaseInStructure, Handle, PhysicalDeviceIDProperties, PhysicalDeviceProperties2},
 };
 use once_cell::sync::Lazy;
-use tracing::{debug, trace};
+use tracing::{debug, error, trace};
 
 /// Map of [`vk::Instance`] to its dispatch table.
 static DISPATCH_TABLE: Lazy<IntDashMap<u64, DispatchTable>> = Lazy::new(IntDashMap::default);
@@ -58,8 +58,13 @@ impl DispatchTable {
                 raw_instance,
             )
         };
-        let physical_devices = unsafe { instance.enumerate_physical_devices() }
-            .expect("failed to enumerate physical devices");
+        let physical_devices = match unsafe { instance.enumerate_physical_devices() } {
+            Ok(physical_devices) => physical_devices,
+            Err(err) => {
+                error!("failed to enumerate physical devices. err: {err:?}");
+                Vec::new()
+            }
+        };
         Self {
             physical_devices,
 
@@ -166,7 +171,10 @@ extern "system" fn destroy_instance(
     trace!("vkDestroyInstance called");
 
     debug!("instance dispatch table cleanup");
-    let (_, table) = DISPATCH_TABLE.remove(&instance.as_raw()).unwrap();
+    let Some((_, table)) = DISPATCH_TABLE.remove(&instance.as_raw()) else {
+        error!("missing dispatch table for vkDestroyInstance");
+        return;
+    };
     unsafe {
         (table.instance.fp_v1_0().destroy_instance)(instance, allocator);
     }

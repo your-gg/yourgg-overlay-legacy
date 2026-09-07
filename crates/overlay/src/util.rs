@@ -96,7 +96,11 @@ pub fn with_keyed_mutex<R>(
 ) -> windows::core::Result<R> {
     match mutex {
         Some(mutex) => {
-            unsafe { mutex.AcquireSync(0, u32::MAX)? };
+            // Finite timeout (ms) instead of INFINITE (u32::MAX) so a stuck mutex
+            // returns an error (propagated by `?`) and skips the closure instead of
+            // freezing the render thread forever.
+            const ACQUIRE_TIMEOUT_MS: u32 = 5_000;
+            unsafe { mutex.AcquireSync(0, ACQUIRE_TIMEOUT_MS)? };
             defer!(unsafe {
                 _ = mutex.ReleaseSync(0);
             });

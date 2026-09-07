@@ -318,16 +318,15 @@ impl VulkanRenderer {
 
             self.device.end_command_buffer(command_buffer)?;
 
+            // Vulkan requires one wait-dst-stage-mask entry per wait semaphore.
+            let wait_dst_stage_mask =
+                vec![vk::PipelineStageFlags::TOP_OF_PIPE; wait_semaphores.len()];
             self.device.queue_submit(
                 queue,
                 &[vk::SubmitInfo::default()
                     .command_buffers(&[command_buffer])
                     .wait_semaphores(wait_semaphores)
-                    .wait_dst_stage_mask(if wait_semaphores.is_empty() {
-                        &[]
-                    } else {
-                        &[vk::PipelineStageFlags::TOP_OF_PIPE]
-                    })
+                    .wait_dst_stage_mask(&wait_dst_stage_mask)
                     .signal_semaphores(&[frame_data.submit_semaphore])],
                 frame_data.fence,
             )?;
@@ -351,7 +350,7 @@ fn map_dxgi_format_to_vk(format: DXGI_FORMAT) -> Option<vk::Format> {
 impl Drop for VulkanRenderer {
     fn drop(&mut self) {
         unsafe {
-            self.device.device_wait_idle().expect("failed to wait idle");
+            let _ = self.device.device_wait_idle();
 
             for frame_data in &mut self.frame_datas {
                 self.device

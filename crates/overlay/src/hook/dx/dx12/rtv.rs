@@ -39,6 +39,19 @@ impl RtvDescriptors {
         index: usize,
         f: impl FnOnce(D3D12_CPU_DESCRIPTOR_HANDLE) -> anyhow::Result<R>,
     ) -> anyhow::Result<R> {
+        // The RTV heap is sized for D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT (8)
+        // descriptors, but the backbuffer index comes from the application's
+        // swapchain and DXGI permits up to DXGI_MAX_SWAP_CHAIN_BUFFERS (16).
+        // Writing a descriptor past the heap (desc_for) or shifting past the
+        // flags width would corrupt memory, so skip the overlay frame for an
+        // out-of-range index instead. The caller discards this Err gracefully.
+        if index >= D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT as usize {
+            anyhow::bail!(
+                "backbuffer index {index} exceeds RTV descriptor heap capacity ({})",
+                D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT
+            );
+        }
+
         let desc = self.desc_for(index);
         if (self.flags >> index) & 1 != 1 {
             self.flags |= 1 << index;

@@ -52,7 +52,18 @@ fn surface_update_shtex(mut cx: FunctionContext) -> JsResult<JsValue> {
     let surface = cx.argument::<JsBox<Surface>>(0)?;
     let width = cx.argument::<JsNumber>(1)?.value(&mut cx) as u32;
     let height = cx.argument::<JsNumber>(2)?.value(&mut cx) as u32;
-    let handle = pod_read_unaligned::<usize>(cx.argument::<JsBuffer>(3)?.as_slice(&cx));
+    let handle = {
+        let buf = cx.argument::<JsBuffer>(3)?;
+        let bytes = buf.as_slice(&cx);
+        if bytes.len() != core::mem::size_of::<usize>() {
+            return cx.throw_error(format!(
+                "handle buffer length {} != size_of::<usize>() {}",
+                bytes.len(),
+                core::mem::size_of::<usize>()
+            ));
+        }
+        pod_read_unaligned::<usize>(bytes)
+    };
     let rect = cx
         .argument_opt(4)
         .filter(|v| !v.is_a::<JsUndefined, _>(&mut cx))
@@ -62,8 +73,17 @@ fn surface_update_shtex(mut cx: FunctionContext) -> JsResult<JsValue> {
         })
         .transpose()?;
 
+    // The full pointer-width handle must round-trip without truncation. The
+    // shared-handle client API takes a u32, so reject (rather than silently
+    // truncate) any handle whose high bits are set on 64-bit platforms.
+    let handle = u32::try_from(handle).or_else(|_| {
+        cx.throw_error(format!(
+            "shared handle {handle:#x} does not fit in 32 bits; cannot pass without truncation"
+        ))
+    })?;
+
     let update = surface
-        .with_mut(|surface| surface.update_from_nt_shared(width, height, handle as u32, rect))
+        .with_mut(|surface| surface.update_from_nt_shared(width, height, handle, rect))
         .or_else(|err| cx.throw_error(format!("Failed to update from shared handle. {err:?}")))?;
 
     match update {

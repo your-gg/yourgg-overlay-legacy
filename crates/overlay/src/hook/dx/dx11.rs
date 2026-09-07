@@ -1,3 +1,4 @@
+use anyhow::Context;
 use dashmap::Entry;
 use once_cell::sync::Lazy;
 use scopeguard::defer;
@@ -117,23 +118,29 @@ pub fn draw_overlay(backend: &WindowBackend, device: &ID3D11Device1, swapchain: 
             data.renderer.update_texture(update);
         }
 
-        let cx = unsafe { device.GetImmediateContext1().unwrap() };
+        let cx = unsafe { device.GetImmediateContext1() }
+            .context("failed to get dx11 immediate context")?;
         let mut prev_state = None;
         unsafe {
             cx.SwapDeviceContextState(&data.state, Some(&mut prev_state));
         }
 
-        let prev_state = prev_state.unwrap();
+        // SwapDeviceContextState writes the previous state here. If it is absent
+        // we cannot safely restore the device, so skip the overlay frame rather
+        // than panic (which, under panic=abort, would crash the host game).
+        let Some(prev_state) = prev_state else {
+            return Ok(());
+        };
         defer!(unsafe {
             cx.SwapDeviceContextState(&prev_state, None);
         });
 
         let back_buffer = unsafe { swapchain.GetBuffer::<ID3D11Texture2D>(0) }
-            .expect("failed to get dx11 backbuffer");
+            .context("failed to get dx11 backbuffer")?;
         let mut rtv = None;
         unsafe { device.CreateRenderTargetView(&back_buffer, None, Some(&mut rtv)) }
-            .expect("failed to create rtv");
-        let rtv = rtv.unwrap();
+            .context("failed to create rtv")?;
+        let rtv = rtv.context("dx11 rtv was not created")?;
 
         unsafe { cx.OMSetRenderTargets(Some(&[Some(rtv)]), None) };
         defer!(unsafe { cx.OMSetRenderTargets(None, None) });

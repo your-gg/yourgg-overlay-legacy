@@ -31,11 +31,11 @@ use crate::{
     types::IntDashMap,
 };
 
-struct WeakID3D12CommandQueue(*mut c_void);
-unsafe impl Send for WeakID3D12CommandQueue {}
-unsafe impl Sync for WeakID3D12CommandQueue {}
+struct SendQueue(ID3D12CommandQueue);
+unsafe impl Send for SendQueue {}
+unsafe impl Sync for SendQueue {}
 
-static QUEUE_MAP: Lazy<IntDashMap<usize, WeakID3D12CommandQueue>> = Lazy::new(IntDashMap::default);
+static QUEUE_MAP: Lazy<IntDashMap<usize, SendQueue>> = Lazy::new(IntDashMap::default);
 
 /// Mapping from [`IDXGISwapChain3`] to [`RendererData`].
 static RENDERERS: Lazy<IntDashMap<usize, RendererData>> = Lazy::new(IntDashMap::default);
@@ -74,11 +74,9 @@ fn with_or_init_renderer_data<R>(
 
 #[tracing::instrument]
 fn get_queue_for(device: &ID3D12Device) -> Option<ID3D12CommandQueue> {
-    Some(unsafe {
-        ID3D12CommandQueue::from_raw_borrowed(&QUEUE_MAP.remove(&(device.as_raw() as _))?.1.0)
-            .unwrap()
-            .clone()
-    })
+    // Return the owned, refcounted queue directly. It is removed from the map
+    // every present, so the extra ref is held only ~1 frame.
+    Some(QUEUE_MAP.remove(&(device.as_raw() as _))?.1.0)
 }
 
 pub fn draw_overlay(backend: &WindowBackend, device: &ID3D12Device, swapchain: &IDXGISwapChain3) {
@@ -179,18 +177,21 @@ extern "system" fn hooked_execute_command_lists(
     trace!("ExecuteCommandLists called");
 
     unsafe {
-        let queue = ID3D12CommandQueue::from_raw_borrowed(&this).unwrap();
-
-        if queue.GetDesc().Type == D3D12_COMMAND_LIST_TYPE_DIRECT {
-            let mut device = None;
-            queue.GetDevice::<ID3D12Device>(&mut device).unwrap();
-            let device = device.unwrap();
-
-            trace!(
-                "found DIRECT command queue {:?} for device {:?}",
-                queue, device
-            );
-            QUEUE_MAP.insert(device.as_raw() as _, WeakID3D12CommandQueue(queue.as_raw()));
+        if let Some(queue) = ID3D12CommandQueue::from_raw_borrowed(&this) {
+            if queue.GetDesc().Type == D3D12_COMMAND_LIST_TYPE_DIRECT {
+                let mut device = None;
+                // device-removed or any other failure must not abort the host game
+                if queue.GetDevice::<ID3D12Device>(&mut device).is_ok() {
+                    if let Some(device) = device {
+                        trace!(
+                            "found DIRECT command queue {:?} for device {:?}",
+                            queue, device
+                        );
+                        // clone = AddRef keeps the vtable alive for ~1 frame
+                        QUEUE_MAP.insert(device.as_raw() as _, SendQueue(queue.clone()));
+                    }
+                }
+            }
         }
 
         HOOK.execute_command_lists.wait().original_fn()(this, num_command_lists, pp_commmand_lists)

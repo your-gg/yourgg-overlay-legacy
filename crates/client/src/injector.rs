@@ -142,8 +142,11 @@ fn process_creation_time(pid: u32) -> anyhow::Result<u64> {
     });
 
     let mut creation = FILETIME::default();
-    let (mut exit, mut kernel, mut user) =
-        (FILETIME::default(), FILETIME::default(), FILETIME::default());
+    let (mut exit, mut kernel, mut user) = (
+        FILETIME::default(),
+        FILETIME::default(),
+        FILETIME::default(),
+    );
     unsafe {
         GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user)
             .context("GetProcessTimes failed for target process")?;

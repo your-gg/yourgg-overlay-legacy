@@ -39,13 +39,14 @@ use windows::{
             LRESULT, LocalFree, WPARAM,
         },
         Security::{
-            ACL, Authorization::{
+            ACL,
+            Authorization::{
                 EXPLICIT_ACCESS_A, SET_ACCESS, SetEntriesInAclA, TRUSTEE_A, TRUSTEE_IS_SID,
                 TRUSTEE_IS_USER,
             },
             GetTokenInformation, InitializeSecurityDescriptor, NO_INHERITANCE,
-            PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SetSecurityDescriptorDacl,
-            TOKEN_QUERY, TOKEN_USER, TokenUser,
+            PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR,
+            SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER, TokenUser,
         },
         System::{
             LibraryLoader::{

@@ -3,7 +3,7 @@ use core::num::NonZeroU32;
 use asdf_overlay_client::{
     common::{request::UpdateSharedHandle, size::PercentLength},
     event::{
-        GpuLuid, OverlayEvent, WindowEvent,
+        AugmentChoices, GpuLuid, OverlayEvent, WindowEvent,
         input::{
             CursorAction, CursorEvent, CursorInput, CursorInputState, Ime, ImeCandidateList,
             InputEvent, Key, KeyInputState, KeyboardInput, ScrollAxis,
@@ -72,9 +72,50 @@ pub fn emit_event<'a>(
                 builder.arg(cx.string("destroyed")).arg(cx.number(id));
             }
         },
+        OverlayEvent::LolAugmentChoices(choices) => {
+            builder
+                .arg(cx.string("game.lol.augment.choices"))
+                .arg(serialize_augment_choices(cx, choices)?);
+        }
+        OverlayEvent::LolAugmentReadError(error) => {
+            builder
+                .arg(cx.string("game.lol.augment.error"))
+                .arg(cx.string(error));
+        }
     }
 
     builder.exec(cx)
+}
+
+fn serialize_augment_choices<'a>(
+    cx: &mut Cx<'a>,
+    choices: AugmentChoices,
+) -> JsResult<'a, JsObject> {
+    let obj = cx.empty_object();
+    let mode = cx.string(choices.mode);
+    obj.prop(cx, "mode").set(mode)?;
+
+    let cards = cx.empty_array();
+    for (index, card) in choices.cards.into_iter().enumerate() {
+        let item = cx.empty_object();
+        let instance = cx.number(card.instance);
+        item.prop(cx, "instance").set(instance)?;
+        let name = cx.string(card.name);
+        item.prop(cx, "name").set(name)?;
+        let description = cx.string(card.description);
+        item.prop(cx, "description").set(description)?;
+        let x = cx.number(card.x);
+        item.prop(cx, "x").set(x)?;
+        let y = cx.number(card.y);
+        item.prop(cx, "y").set(y)?;
+        let width = cx.number(card.width);
+        item.prop(cx, "width").set(width)?;
+        let height = cx.number(card.height);
+        item.prop(cx, "height").set(height)?;
+        cards.prop(cx, index as u32).set(item)?;
+    }
+    obj.prop(cx, "cards").set(cards)?;
+    Ok(obj)
 }
 
 fn serialize_keyboard_input<'a>(cx: &mut Cx<'a>, input: KeyboardInput) -> JsResult<'a, JsObject> {

@@ -20,6 +20,33 @@ pub enum OverlayEvent {
         id: u32,
         event: WindowEvent,
     },
+
+    /// Current League of Legends augment choices read inside the game process.
+    LolAugmentChoices(AugmentChoices),
+
+    /// Memory reader diagnostic emitted when a snapshot cannot be read.
+    LolAugmentReadError(String),
+}
+
+/// League augment choice snapshot.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
+pub struct AugmentChoices {
+    pub mode: String,
+    pub cards: Vec<AugmentCard>,
+}
+
+/// A single League augment card.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
+pub struct AugmentCard {
+    pub instance: u32,
+    pub name: String,
+    pub description: String,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
 }
 
 /// Describe a window event.

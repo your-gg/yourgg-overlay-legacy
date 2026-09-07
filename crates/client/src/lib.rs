@@ -14,7 +14,7 @@
 //!     let dll = OverlayDll {
 //!         x64: Some(Path::new("asdf-overlay-x64.dll")),
 //!         x86: Some(Path::new("asdf-overlay-x86.dll")),
-//!         x86: Some(Path::new("asdf-overlay-arm64.dll")),
+//!         arm64: Some(Path::new("asdf-overlay-arm64.dll")),
 //!     };
 //!
 //!    let (mut conn, mut events) = inject(

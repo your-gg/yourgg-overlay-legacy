@@ -8,6 +8,7 @@
 #[cfg(debug_assertions)]
 mod dbg;
 
+mod augment_reader;
 mod server;
 
 extern crate asdf_overlay_vulkan_layer;
@@ -61,6 +62,7 @@ use windows::{
     core::{BOOL, PCWSTR, PSTR},
 };
 
+use crate::augment_reader::AugmentReader;
 use crate::server::IpcServerConn;
 
 /// IPC server main loop.
@@ -119,6 +121,13 @@ async fn run(server: NamedPipeServer) -> anyhow::Result<()> {
 
     let mut conn = IpcServerConn::new(server).await?;
     let emitter = conn.create_emitter();
+    let _augment_reader = match AugmentReader::start(emitter.clone()) {
+        Ok(reader) => Some(reader),
+        Err(err) => {
+            warn!("cannot start augment memory reader: {err:?}");
+            None
+        }
+    };
     {
         debug!("sending initial data");
         // send existing windows

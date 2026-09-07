@@ -1,113 +1,45 @@
-import { app, BrowserWindow } from 'electron';
-import { defaultDllDir, Overlay, percent, type GpuLuid } from '@your-gg/yourgg-core';
-import { InputState } from '@your-gg/yourgg-core/input';
-import find from 'find-process';
-import { type OverlayWindow } from '@your-gg/yourgg-overlay';
-import { ElectronOverlaySurface } from '@your-gg/yourgg-overlay/surface';
-import { ElectronOverlayInput } from '@your-gg/yourgg-overlay/input';
-
-async function createOverlayWindow(pid: number) {
-  const overlay = await Overlay.attach(
-    defaultDllDir().replace('app.asar', 'app.asar.unpacked'),
-    pid,
-  );
-
-  // Create the browser window.
-  const mainWindow = new BrowserWindow({
-    webPreferences: {
-      offscreen: {
-        useSharedTexture: true,
-      },
-    },
-  });
-
-  const [id, luid] = await new Promise<[number, GpuLuid]>(resolve => overlay.event.once(
-    'added',
-    (id, _width, _height, luid) => {
-      resolve([id, luid]);
-    }),
-  );
-  const window: OverlayWindow = { id, overlay };
-
-  // centre layout
-  void overlay.setPosition(id, percent(0.5), percent(0.5));
-  void overlay.setAnchor(id, percent(0.5), percent(0.5));
-
-  let surface: ElectronOverlaySurface | null = null;
-
-  // always listen keyboard events
-  await overlay.listenInput(id, false, true);
-
-  let overlayInput: ElectronOverlayInput | null = null;
-  let block = false;
-  let shiftState: InputState = 'Released';
-  let aState: InputState = 'Released';
-  overlay.event.on('keyboard_input', (_, input) => {
-    keybind: if (input.kind === 'Key') {
-      const key = input.key;
-      if (key.code === 0x10 && !key.extended) {
-        shiftState = input.state;
-      } else if (key.code === 0x41) {
-        aState = input.state;
-      } else {
-        break keybind;
-      }
-
-      // when Left Shift + A is pressed. show window and start blocking.
-      if (shiftState === aState && shiftState === 'Pressed') {
-        block = !block;
-
-        if (block) {
-          overlayInput = ElectronOverlayInput.connect(window, mainWindow.webContents);
-          surface = ElectronOverlaySurface.connect(window, luid, mainWindow.webContents);
-
-          // do full repaint
-          mainWindow.webContents.startPainting();
-          mainWindow.webContents.invalidate();
-          mainWindow.focusOnWebView();
-
-          // Open the DevTools.
-          mainWindow.webContents.openDevTools();
-        }
-
-        // block all inputs reaching window and listen
-        void overlay.blockInput(id, block);
-        return;
-      }
-    }
-  });
-
-  // always listen for `input_blocking_ended` because user can cancel blocking
-  overlay.event.on('input_blocking_ended', () => {
-    block = false;
-    mainWindow.webContents.stopPainting();
-    mainWindow.blurWebView();
-    void surface?.disconnect().then(() => {
-      surface = null;
-    });
-    void overlayInput?.disconnect().then(() => {
-      overlayInput = null;
-    });
-  });
-
-  mainWindow.webContents.stopPainting();
-  await mainWindow.loadURL('https://electronjs.org');
-}
+import { app } from 'electron';
+import {
+  startGameOverlays,
+  type GameId,
+  type GameOverlayOptions,
+} from '@your-gg/yourgg-overlay';
 
 async function main() {
   await app.whenReady();
 
-  const name = process.argv[2];
-  if (!name) {
-    throw new Error('Please provide process name to attach overlay');
+  const selected = process.argv[2] ?? 'all';
+  if (!['valorant', 'league', 'all'].includes(selected)) {
+    throw new Error('Usage: ingame-browser [valorant|league|all]');
   }
 
-  const list = await find('name', name, true);
-  if (list.length === 0) {
-    throw new Error(`Couldn't find a process named ${name}`);
+  const overlayPage: GameOverlayOptions = {
+    url: 'https://electronjs.org',
+    width: 800,
+    height: 600,
+  };
+  const games: Partial<Record<GameId, GameOverlayOptions>> = {};
+  if (selected === 'valorant' || selected === 'all') {
+    games.valorant = overlayPage;
+  }
+  if (selected === 'league' || selected === 'all') {
+    games.league = overlayPage;
   }
 
-  await createOverlayWindow(list[0].pid);
+  const manager = await startGameOverlays({ games });
+  manager.events.on('attached', ({ game, process }) => {
+    console.log(`Attached ${game} overlay to PID ${String(process.pid)}`);
+  });
+  manager.events.on('detached', (game, pid) => {
+    console.log(`Detached ${game} overlay from PID ${String(pid)}`);
+  });
+  manager.events.on('error', (game, error) => {
+    console.error(`${game} overlay error:`, error);
+  });
+
+  app.on('before-quit', () => {
+    void manager.stop();
+  });
 }
 
 main().catch((e: unknown) => {

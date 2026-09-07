@@ -1,5 +1,7 @@
 import type { Overlay } from '@your-gg/yourgg-core';
 
+export * from './game-overlay/index.js';
+
 /**
  * Describe a window in `Overlay`.
  */

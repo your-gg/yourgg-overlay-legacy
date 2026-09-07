@@ -20,7 +20,8 @@
   },
   "scripts": {
     "build:dist": "tsc",
-    "build": "npm run build:dist"
+    "build": "npm run build:dist",
+    "test": "npm run build:dist && node --test test/*.test.mjs"
   },
   "exports": {
     ".": {

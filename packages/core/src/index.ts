@@ -50,47 +50,83 @@ function loadAddon(): Addon {
  */
 const idSym: unique symbol = Symbol('id');
 
-export type OverlayEventEmitter = EventEmitter<{
-  /**
-   * A window has been added.
-   */
-  added: [id: number, width: number, height: number, luid: GpuLuid],
+export type LolAugmentCard = {
+  instance: number,
+  name: string,
+  description: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+};
 
-  /**
-   * A window has been resized.
-   */
-  resized: [id: number, width: number, height: number],
+export type LolAugmentChoices = {
+  mode: 'arena' | 'mayhem',
+  cards: LolAugmentCard[],
+};
 
-  /**
-   * Cursor input from a window.
-   */
-  cursor_input: [id: number, input: CursorInput],
+export type LolOwnedAugments = {
+  internalNames: string[],
+};
 
-  /**
-   * Keyboard input from a window.
-   */
-  keyboard_input: [id: number, input: KeyboardInput],
+export type OverlayEventEmitter = EventEmitter<
+  {
+    /**
+     * A window has been added.
+     */
+    added: [id: number, width: number, height: number, luid: GpuLuid],
 
-  /**
-   * Input blocking to a window is interrupted and turned off.
-   */
-  input_blocking_ended: [id: number],
+    /**
+     * A window has been resized.
+     */
+    resized: [id: number, width: number, height: number],
 
-  /**
-   * Window is destroyed.
-   */
-  destroyed: [id: number],
+    /**
+     * Cursor input from a window.
+     */
+    cursor_input: [id: number, input: CursorInput],
 
-  /**
-   * An error has occured on ipc connection.
-   */
-  error: [err: unknown],
+    /**
+     * Keyboard input from a window.
+     */
+    keyboard_input: [id: number, input: KeyboardInput],
 
-  /**
-   * Ipc disconnected.
-   */
-  disconnected: [],
-}>;
+    /**
+     * Input blocking is turned off or interrupted.
+     */
+    input_blocking_ended: [id: number],
+
+    /**
+     * Window is destroyed.
+     */
+    destroyed: [id: number],
+
+    /**
+     * An error has occurred on the IPC connection.
+     */
+    error: [err: unknown],
+
+    /**
+     * IPC disconnected.
+     */
+    disconnected: [],
+  } & {
+    /**
+     * Current League augment choices read from the game process.
+     */
+    'game.lol.augment.choices': [choices: LolAugmentChoices],
+
+    /**
+     * Local player's currently owned League augments.
+     */
+    'game.lol.augment.owned': [owned: LolOwnedAugments],
+
+    /**
+     * Memory reader diagnostic.
+     */
+    'game.lol.augment.error': [error: string],
+  }
+>;
 
 export class Overlay {
   readonly event: OverlayEventEmitter = new EventEmitter();
@@ -119,7 +155,7 @@ export class Overlay {
           break;
         }
       }
-    })().catch((err) => {
+    })().catch((err: unknown) => {
       // Never let a rejection from the pump become an unhandledRejection,
       // which can terminate Electron. Route it to the `error` event so
       // consumers can react; transient/listener errors must not tear down

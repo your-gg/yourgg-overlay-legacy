@@ -1,3 +1,6 @@
 [submodule "crates/hook/detours"]
 	path = crates/hook/detours
 	url = https://github.com/microsoft/Detours
+[submodule "native/yourgg-memory-reader"]
+	path = native/yourgg-memory-reader
+	url = https://github.com/your-gg/yourgg-memory-reader.git

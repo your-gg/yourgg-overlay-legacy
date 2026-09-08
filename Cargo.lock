@@ -152,6 +152,7 @@ dependencies = [
  "asdf-overlay-event",
  "asdf-overlay-vulkan-layer",
  "bincode",
+ "cc",
  "parking_lot",
  "scopeguard",
  "static_vcruntime",

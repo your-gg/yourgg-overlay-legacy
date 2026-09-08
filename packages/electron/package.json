@@ -1,6 +1,6 @@
 {
   "name": "@your-gg/yourgg-overlay",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "YOUR.GG overlay Electron integration",
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",

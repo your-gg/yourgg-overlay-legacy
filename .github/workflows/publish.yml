@@ -41,9 +41,6 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          ssh-key: ${{ secrets.MEMORY_READER_SSH_KEY }}
 
       - name: Setup cd
         run: |

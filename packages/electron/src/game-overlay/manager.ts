@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { findGameProcess } from './profiles.js';
+import { findGameProcess, resolveGameTarget } from './profiles.js';
 import { listWindowsProcesses } from './processes.js';
 import type {
   GameId,
@@ -8,9 +8,8 @@ import type {
   GameOverlaySession,
   GameOverlaySessionFactory,
   GameProcess,
+  GameTarget,
 } from './types.js';
-
-const GAME_IDS = ['valorant', 'league'] as const;
 
 const defaultSessionFactory: GameOverlaySessionFactory = async (
   game,
@@ -25,6 +24,7 @@ const defaultSessionFactory: GameOverlaySessionFactory = async (
 export class GameOverlayManager {
   readonly events = new EventEmitter<GameOverlayManagerEvents>();
 
+  private readonly targets: readonly GameTarget[];
   private readonly sessions = new Map<GameId, GameOverlaySession>();
   private readonly attaching = new Map<GameId, Promise<void>>();
   private readonly desiredPids = new Map<GameId, number>();
@@ -40,6 +40,11 @@ export class GameOverlayManager {
     // EventEmitter treats an unhandled `error` event as an exception. Consumers
     // may subscribe for diagnostics, but retries must remain safe without one.
     this.events.on('error', () => {});
+    // Resolve every target up front so a key without a profile or an
+    // `executable`/`match` fails here, not silently on every scan.
+    this.targets = Object.entries(options.games).flatMap(([game, gameOptions]) =>
+      gameOptions ? [resolveGameTarget(game, gameOptions)] : [],
+    );
     this.processProvider = options.processProvider ?? listWindowsProcesses;
     this.sessionFactory = options.sessionFactory ?? defaultSessionFactory;
     this.dllDir = (options.dllDir ?? '').replace(
@@ -80,10 +85,8 @@ export class GameOverlayManager {
     try {
       processes = await this.processProvider();
     } catch (error) {
-      for (const game of GAME_IDS) {
-        if (this.options.games[game]) {
-          this.events.emit('error', game, error);
-        }
+      for (const { id } of this.targets) {
+        this.events.emit('error', id, error);
       }
       return;
     }
@@ -92,12 +95,9 @@ export class GameOverlayManager {
     }
 
     await Promise.all(
-      GAME_IDS.map(async (game) => {
-        if (!this.options.games[game]) {
-          return;
-        }
-        await this.reconcile(game, findGameProcess(game, processes));
-      }),
+      this.targets.map(target =>
+        this.reconcile(target.id, findGameProcess(target, processes)),
+      ),
     );
   }
 

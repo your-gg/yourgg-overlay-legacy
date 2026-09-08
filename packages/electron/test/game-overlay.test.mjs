@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import test, { mock } from 'node:test';
 import { GameOverlayManager } from '../lib/game-overlay/manager.js';
 import { parseTasklist } from '../lib/game-overlay/processes.js';
+import { resolveGameTarget } from '../lib/game-overlay/profiles.js';
 
 void test('parseTasklist parses Windows CSV output', () => {
   assert.deepEqual(
@@ -170,4 +171,64 @@ void test('positive scanIntervalMs keeps periodic scanning', async () => {
   } finally {
     mock.timers.reset();
   }
+});
+
+void test('custom executable and match targets attach alongside presets', async () => {
+  const processes = [
+    { name: 'League of Legends.exe', pid: 10, path: 'C:\\Riot Games\\League of Legends\\Game\\League of Legends.exe' },
+    { name: 'League of Legends.exe', pid: 11, path: 'D:\\Riot Games\\League of Legends (loltmnt04)\\Game\\League of Legends.exe' },
+    { name: 'SomeGame.exe', pid: 12 },
+  ];
+  const created = [];
+  const manager = new GameOverlayManager({
+    games: {
+      'league': {
+        url: 'https://example.test/league',
+        match: p => p.name === 'League of Legends.exe' && !p.path?.includes('loltmnt'),
+      },
+      'league-tournament': {
+        url: 'https://example.test/tournament',
+        match: p => p.name === 'League of Legends.exe' && Boolean(p.path?.includes('loltmnt')),
+      },
+      'somegame': { url: 'https://example.test/somegame', executable: 'somegame.EXE' },
+    },
+    dllDir: 'C:\\overlay',
+    processProvider: () => Promise.resolve(processes),
+    sessionFactory: (game, process) => {
+      created.push([game, process.pid]);
+      return Promise.resolve({
+        game,
+        process,
+        // @ts-expect-error Minimal native overlay test double.
+        overlay: { event: new EventEmitter() },
+        window: {},
+        stopped: false,
+        setInteractive: () => Promise.resolve(),
+        stop: () => Promise.resolve(),
+      });
+    },
+  });
+
+  await manager.start();
+  assert.deepEqual(new Set(created.map(([g, p]) => `${String(g)}:${String(p)}`)), new Set([
+    'league:10',
+    'league-tournament:11',
+    'somegame:12',
+  ]));
+  await manager.stop();
+});
+
+void test('unknown game key without executable or match fails at construction', () => {
+  assert.throws(
+    () => new GameOverlayManager({
+      games: { tft: { url: 'https://example.test/tft' } },
+      dllDir: 'C:\\overlay',
+    }),
+    /no built-in profile/,
+  );
+  assert.equal(resolveGameTarget('league', {}).executable, 'League of Legends.exe');
+  assert.equal(
+    resolveGameTarget('league', { executable: 'Custom.exe' }).executable,
+    'Custom.exe',
+  );
 });

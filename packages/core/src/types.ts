@@ -157,4 +157,10 @@ export type ProcessEntry = {
    * Executable file name without path, e.g. `League of Legends.exe`.
    */
   name: string,
+
+  /**
+   * Full path of the executable, when the process could be queried. Absent for
+   * protected system processes.
+   */
+  path?: string,
 };

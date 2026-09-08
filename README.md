@@ -134,6 +134,32 @@ overlays.events.on('attached', (session) => {
 `setInteractive(true)`는 게임 입력을 차단하므로 단순 정보 표시 UI에서는
 호출하지 않는 편이 맞다.
 
+### 다른 실행 파일에 붙이기
+
+`games`의 키는 임의의 문자열이다. `league`, `valorant`는 실행 파일 이름이
+내장돼 있어 생략할 수 있고, 그 외 키는 `executable` 또는 `match`를 넘긴다.
+이름이 같은 설치본(라이브 vs 토너먼트 클라이언트)은 `match`에서 경로로 가른다.
+
+```typescript
+const overlays = await startGameOverlays({
+  games: {
+    league: {
+      url: 'app://overlay/league',
+      match: p => p.name === 'League of Legends.exe' && !p.path?.includes('loltmnt'),
+    },
+    'league-tournament': {
+      url: 'app://overlay/league',
+      match: p => p.name === 'League of Legends.exe' && Boolean(p.path?.includes('loltmnt')),
+    },
+    other: { url: 'app://overlay/other', executable: 'OtherGame.exe' },
+  },
+});
+```
+
+롤체는 같은 `League of Legends.exe`에서 돌기 때문에 별도 항목이 필요 없다.
+`league` 세션이 붙고, 어떤 UI를 보일지는 오버레이 페이지가 LCU 또는 Live
+Client Data에서 게임 모드를 읽어 결정한다.
+
 ### 발로란트와 롤 동시 지원
 
 하나의 앱에서 두 게임을 모두 감시하려면 게임별 UI URL을 넘긴다. 각 게임은

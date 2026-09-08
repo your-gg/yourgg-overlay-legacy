@@ -81,6 +81,30 @@ a context-isolated preload.
 - With electron-builder, include
   `node_modules/@your-gg/yourgg-core/**/*.{node,dll,exe}` in `asarUnpack`.
 
+### Targeting other executables
+
+Keys in `games` are arbitrary strings. `league` and `valorant` carry built-in
+executable names; any other key must supply `executable` or `match`. Use
+`match` when the executable name is ambiguous, e.g. the live and tournament
+League clients share `League of Legends.exe` and differ only by install path
+(`GameProcess.path`).
+
+```typescript
+const overlays = await startGameOverlays({
+  games: {
+    league: {
+      url: 'app://overlay/league',
+      match: p => p.name === 'League of Legends.exe' && !p.path?.includes('loltmnt'),
+    },
+    other: { url: 'app://overlay/other', executable: 'OtherGame.exe' },
+  },
+});
+```
+
+Teamfight Tactics runs inside the same `League of Legends.exe`, so it needs no
+entry of its own: the `league` session attaches, and the overlay page decides
+which UI to show from the game mode reported by the LCU or Live Client Data.
+
 ### Event-driven attach
 
 The manager scans running processes once on `start()` and afterwards only when

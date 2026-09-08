@@ -4,16 +4,38 @@ import type {
 } from 'electron';
 import type { Overlay, PercentLength } from '@your-gg/yourgg-core';
 
-export type GameId = 'valorant' | 'league';
+/**
+ * Key identifying a target game in `games`. `'league'` and `'valorant'` have
+ * built-in profiles; any other string works when the entry supplies
+ * `executable` or `match`.
+ */
+export type GameId = string;
 
 export type GameProcess = {
   pid: number,
+  /**
+   * Executable file name without path, e.g. `League of Legends.exe`.
+   */
   name: string,
+  /**
+   * Full executable path when the process could be queried. Use it to tell
+   * apart installs that share an executable name (live vs tournament client).
+   */
+  path?: string,
 };
 
 export type GameProfile = {
   id: GameId,
   executable: string,
+};
+
+/**
+ * Resolved description of how one `games` entry finds its process.
+ */
+export type GameTarget = {
+  id: GameId,
+  executable?: string,
+  match: (process: GameProcess) => boolean,
 };
 
 export type GameOverlayPlacement = {
@@ -37,6 +59,18 @@ export type GameOverlayWindowContext = {
 
 export type GameOverlayOptions = {
   url: string,
+  /**
+   * Executable file name to attach to (case-insensitive). Optional for keys
+   * with a built-in profile (`league`, `valorant`), required otherwise unless
+   * `match` is given.
+   */
+  executable?: string,
+  /**
+   * Custom process predicate. Takes precedence over `executable` and the
+   * built-in profile. Use when the executable name alone is ambiguous, e.g.
+   * `(p) => p.name === 'League of Legends.exe' && p.path?.includes('loltmnt')`.
+   */
+  match?: (process: GameProcess) => boolean,
   width?: number,
   height?: number,
   frameRate?: number,

@@ -17,6 +17,11 @@ export async function startGameOverlays(
   return new GameOverlayManager(options).start();
 }
 
+/**
+ * Start overlays for a single game. `game` is either a built-in key
+ * (`'league'`, `'valorant'`) or any string paired with `options.executable`
+ * or `options.match`.
+ */
 export async function startGameOverlay(
   game: GameId,
   options: GameOverlayOptions,

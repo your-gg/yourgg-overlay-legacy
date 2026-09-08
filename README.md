@@ -81,7 +81,8 @@ app.on('before-quit', () => {
 
 롤 프로세스에 attach된 세션은 게임 메모리에서 현재 증강 선택지를 읽어
 `game.lol.augment.choices` 이벤트로 전달한다. 패널이 닫히면
-`game.lol.augment.error`에 `hud_map_not_found`가 전달된다.
+`game.lol.augment.error`에 `hud_map_not_found`가 전달된다. 로컬 플레이어가
+보유한 증강은 `game.lol.augment.owned`로 전달된다.
 
 ```typescript
 overlays.events.on('attached', (session) => {
@@ -89,6 +90,9 @@ overlays.events.on('attached', (session) => {
     if (choices.mode === 'mayhem') {
       console.log(choices.cards);
     }
+  });
+  session.overlay.event.on('game.lol.augment.owned', (owned) => {
+    console.log(owned.internalNames);
   });
 });
 ```

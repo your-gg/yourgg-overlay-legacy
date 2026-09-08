@@ -33,39 +33,58 @@ extern "C" bool yourgg_augment_reader_start(
     void* handle,
     void* context,
     YourggAugmentChoicesCallback on_choices,
+    YourggAugmentOwnedCallback on_owned,
     YourggAugmentErrorCallback on_error) {
-    if (!handle || !on_choices) {
+    if (!handle || (!on_choices && !on_owned)) {
         return false;
     }
 
     try {
         auto* state = static_cast<ReaderHandle*>(handle);
-        return state->reader.start(
-            [context, on_choices](const yourgg::lol::AugmentChoices& choices) {
-                std::vector<YourggAugmentCard> cards;
-                cards.reserve(choices.cards.size());
-                for (const auto& card : choices.cards) {
-                    cards.push_back({
-                        .instance = card.instance,
-                        .name = card.name.c_str(),
-                        .description = card.description.c_str(),
-                        .x = card.x,
-                        .y = card.y,
-                        .width = card.width,
-                        .height = card.height,
-                    });
-                }
-                on_choices(
-                    context,
-                    yourgg::lol::toString(choices.mode),
-                    cards.data(),
-                    cards.size());
-            },
-            [context, on_error](yourgg::lol::ReadError error) {
-                if (on_error) {
-                    on_error(context, yourgg::lol::toString(error));
-                }
-            });
+        return state->reader.start({
+            .choices =
+                [context, on_choices](const yourgg::lol::AugmentChoices& choices) {
+                    if (!on_choices) {
+                        return;
+                    }
+                    std::vector<YourggAugmentCard> cards;
+                    cards.reserve(choices.cards.size());
+                    for (const auto& card : choices.cards) {
+                        cards.push_back({
+                            .instance = card.instance,
+                            .name = card.name.c_str(),
+                            .description = card.description.c_str(),
+                            .x = card.x,
+                            .y = card.y,
+                            .width = card.width,
+                            .height = card.height,
+                        });
+                    }
+                    on_choices(
+                        context,
+                        yourgg::lol::toString(choices.mode),
+                        cards.data(),
+                        cards.size());
+                },
+            .owned =
+                [context, on_owned](const yourgg::lol::OwnedAugments& owned) {
+                    if (!on_owned) {
+                        return;
+                    }
+                    std::vector<const char*> names;
+                    names.reserve(owned.internalNames.size());
+                    for (const auto& name : owned.internalNames) {
+                        names.push_back(name.c_str());
+                    }
+                    on_owned(context, names.data(), names.size());
+                },
+            .error =
+                [context, on_error](yourgg::lol::ReadError error) {
+                    if (on_error) {
+                        on_error(context, yourgg::lol::toString(error));
+                    }
+                },
+        });
     } catch (...) {
         return false;
     }

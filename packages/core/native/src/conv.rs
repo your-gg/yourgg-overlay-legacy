@@ -3,7 +3,7 @@ use core::num::NonZeroU32;
 use asdf_overlay_client::{
     common::{request::UpdateSharedHandle, size::PercentLength},
     event::{
-        AugmentChoices, GpuLuid, OverlayEvent, WindowEvent,
+        AugmentChoices, GpuLuid, OverlayEvent, OwnedAugments, WindowEvent,
         input::{
             CursorAction, CursorEvent, CursorInput, CursorInputState, Ime, ImeCandidateList,
             InputEvent, Key, KeyInputState, KeyboardInput, ScrollAxis,
@@ -77,6 +77,11 @@ pub fn emit_event<'a>(
                 .arg(cx.string("game.lol.augment.choices"))
                 .arg(serialize_augment_choices(cx, choices)?);
         }
+        OverlayEvent::LolAugmentOwned(owned) => {
+            builder
+                .arg(cx.string("game.lol.augment.owned"))
+                .arg(serialize_owned_augments(cx, owned)?);
+        }
         OverlayEvent::LolAugmentReadError(error) => {
             builder
                 .arg(cx.string("game.lol.augment.error"))
@@ -115,6 +120,17 @@ fn serialize_augment_choices<'a>(
         cards.prop(cx, index as u32).set(item)?;
     }
     obj.prop(cx, "cards").set(cards)?;
+    Ok(obj)
+}
+
+fn serialize_owned_augments<'a>(cx: &mut Cx<'a>, owned: OwnedAugments) -> JsResult<'a, JsObject> {
+    let obj = cx.empty_object();
+    let names = cx.empty_array();
+    for (index, name) in owned.internal_names.into_iter().enumerate() {
+        let value = cx.string(name);
+        names.prop(cx, index as u32).set(value)?;
+    }
+    obj.prop(cx, "internalNames").set(names)?;
     Ok(obj)
 }
 

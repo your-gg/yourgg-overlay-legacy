@@ -24,6 +24,9 @@ pub enum OverlayEvent {
     /// Current League of Legends augment choices read inside the game process.
     LolAugmentChoices(AugmentChoices),
 
+    /// Local player's currently owned League augments.
+    LolAugmentOwned(OwnedAugments),
+
     /// Memory reader diagnostic emitted when a snapshot cannot be read.
     LolAugmentReadError(String),
 }
@@ -34,6 +37,13 @@ pub enum OverlayEvent {
 pub struct AugmentChoices {
     pub mode: String,
     pub cards: Vec<AugmentCard>,
+}
+
+/// Local player's currently owned League augments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
+pub struct OwnedAugments {
+    pub internal_names: Vec<String>,
 }
 
 /// A single League augment card.

@@ -65,6 +65,10 @@ export type LolAugmentChoices = {
   cards: LolAugmentCard[],
 };
 
+export type LolOwnedAugments = {
+  internalNames: string[],
+};
+
 export type OverlayEventEmitter = EventEmitter<
   {
     /**
@@ -111,6 +115,11 @@ export type OverlayEventEmitter = EventEmitter<
      * Current League augment choices read from the game process.
      */
     'game.lol.augment.choices': [choices: LolAugmentChoices],
+
+    /**
+     * Local player's currently owned League augments.
+     */
+    'game.lol.augment.owned': [owned: LolOwnedAugments],
 
     /**
      * Memory reader diagnostic.

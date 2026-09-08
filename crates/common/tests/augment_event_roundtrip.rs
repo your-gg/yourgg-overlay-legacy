@@ -1,5 +1,5 @@
 use asdf_overlay_common::ipc::ServerToClientPacket;
-use asdf_overlay_event::{AugmentCard, AugmentChoices, OverlayEvent};
+use asdf_overlay_event::{AugmentCard, AugmentChoices, OverlayEvent, OwnedAugments};
 
 #[test]
 fn augment_choices_round_trip_through_ipc_packet() {
@@ -27,6 +27,30 @@ fn augment_choices_round_trip_through_ipc_packet() {
     assert_eq!(consumed, encoded.len());
     let ServerToClientPacket::Event(OverlayEvent::LolAugmentChoices(actual)) = decoded else {
         panic!("decoded packet was not an augment choices event");
+    };
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn owned_augments_round_trip_through_ipc_packet() {
+    let expected = OwnedAugments {
+        internal_names: vec![
+            "Augment_ContractKiller".into(),
+            "Augment_ThreadTheNeedle".into(),
+        ],
+    };
+    let packet = ServerToClientPacket::Event(OverlayEvent::LolAugmentOwned(expected.clone()));
+
+    let encoded = bincode::encode_to_vec(packet, bincode::config::standard()).unwrap();
+    let (decoded, consumed) = bincode::decode_from_slice::<ServerToClientPacket, _>(
+        &encoded,
+        bincode::config::standard(),
+    )
+    .unwrap();
+
+    assert_eq!(consumed, encoded.len());
+    let ServerToClientPacket::Event(OverlayEvent::LolAugmentOwned(actual)) = decoded else {
+        panic!("decoded packet was not an owned augments event");
     };
     assert_eq!(actual, expected);
 }

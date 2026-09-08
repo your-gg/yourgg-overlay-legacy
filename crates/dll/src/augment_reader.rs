@@ -1,4 +1,4 @@
-use asdf_overlay_event::{AugmentCard, AugmentChoices, OverlayEvent};
+use asdf_overlay_event::{AugmentCard, AugmentChoices, OverlayEvent, OwnedAugments};
 use std::{
     ffi::{CStr, c_char, c_void},
     ptr::NonNull,
@@ -20,6 +20,7 @@ struct NativeAugmentCard {
 
 type ChoicesCallback =
     unsafe extern "C" fn(*mut c_void, *const c_char, *const NativeAugmentCard, usize);
+type OwnedCallback = unsafe extern "C" fn(*mut c_void, *const *const c_char, usize);
 type ErrorCallback = unsafe extern "C" fn(*mut c_void, *const c_char);
 
 unsafe extern "C" {
@@ -28,6 +29,7 @@ unsafe extern "C" {
         handle: *mut c_void,
         context: *mut c_void,
         on_choices: Option<ChoicesCallback>,
+        on_owned: Option<OwnedCallback>,
         on_error: Option<ErrorCallback>,
     ) -> bool;
     fn yourgg_augment_reader_stop(handle: *mut c_void);
@@ -50,6 +52,7 @@ impl AugmentReader {
                 handle.as_ptr(),
                 context.as_ptr().cast(),
                 Some(on_choices),
+                Some(on_owned),
                 Some(on_error),
             )
         };
@@ -112,6 +115,29 @@ unsafe extern "C" fn on_choices(
     let _ = emitter.emit(OverlayEvent::LolAugmentChoices(AugmentChoices {
         mode,
         cards,
+    }));
+}
+
+unsafe extern "C" fn on_owned(
+    context: *mut c_void,
+    names: *const *const c_char,
+    name_count: usize,
+) {
+    let Some(emitter) = (unsafe { context.cast::<IpcClientEventEmitter>().as_ref() }) else {
+        return;
+    };
+    if name_count != 0 && names.is_null() {
+        return;
+    }
+
+    let names = if name_count == 0 {
+        &[]
+    } else {
+        unsafe { slice::from_raw_parts(names, name_count) }
+    };
+    let internal_names = names.iter().copied().map(copy_string).collect();
+    let _ = emitter.emit(OverlayEvent::LolAugmentOwned(OwnedAugments {
+        internal_names,
     }));
 }
 

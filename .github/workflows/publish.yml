@@ -29,6 +29,7 @@ jobs:
       AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
       AZURE_SIGNING_PROFILE: ${{ secrets.AZURE_SIGNING_PROFILE }}
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      MEMORY_READER_SSH_KEY: ${{ secrets.MEMORY_READER_SSH_KEY }}
 
   publish:
     runs-on: windows-latest

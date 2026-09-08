@@ -29,6 +29,8 @@ on:
         required: false
       SENTRY_AUTH_TOKEN:
         required: false
+      MEMORY_READER_SSH_KEY:
+        required: false
   workflow_dispatch:
     inputs:
       sign:

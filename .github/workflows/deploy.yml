@@ -111,6 +111,7 @@ jobs:
       # sends crashes to, or they won't resolve.
       - name: Upload debug files (PDB) to Sentry
         if: ${{ inputs.sign }}
+        continue-on-error: true
         shell: bash
         run: |
           if [ -z "$SENTRY_AUTH_TOKEN" ]; then

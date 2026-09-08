@@ -12,13 +12,15 @@
 //! its hook proc, which only fires inside the target. See `asdf-overlay-dll`.
 
 use core::{mem, time::Duration};
-use std::{os::windows::ffi::OsStrExt, path::Path};
+use std::{os::windows::ffi::OsStrExt, path::Path, thread::sleep, time::Instant};
 
 use anyhow::{Context, bail};
 use scopeguard::defer;
 use windows::{
     Win32::{
-        Foundation::{CloseHandle, FILETIME, HANDLE, HINSTANCE, HWND, LPARAM, WPARAM},
+        Foundation::{
+            CloseHandle, FILETIME, HANDLE, HINSTANCE, HWND, LPARAM, STILL_ACTIVE, WPARAM,
+        },
         System::{
             LibraryLoader::{GetProcAddress, LoadLibraryW},
             SystemInformation::{
@@ -26,8 +28,8 @@ use windows::{
                 IMAGE_FILE_MACHINE_I386, IMAGE_FILE_MACHINE_UNKNOWN,
             },
             Threading::{
-                GetCurrentProcess, GetProcessIdOfThread, GetProcessTimes, IsWow64Process2,
-                OpenProcess, OpenThread, PROCESS_QUERY_LIMITED_INFORMATION,
+                GetCurrentProcess, GetExitCodeProcess, GetProcessIdOfThread, GetProcessTimes,
+                IsWow64Process2, OpenProcess, OpenThread, PROCESS_QUERY_LIMITED_INFORMATION,
                 THREAD_QUERY_LIMITED_INFORMATION,
             },
         },
@@ -41,12 +43,21 @@ use windows::{
 
 use crate::OverlayDll;
 
+/// How often to re-check for the target's GUI thread while waiting for its
+/// window to appear.
+const GUI_THREAD_POLL: Duration = Duration::from_millis(100);
+
 /// Inject the overlay DLL into the target process via `SetWindowsHookEx`.
 ///
 /// On success the DLL has been registered as a `WH_GETMESSAGE` hook on a GUI
 /// thread of the target and nudged to load; it then starts its IPC server and
 /// pins itself. The hook is intentionally left installed for the session.
-pub fn inject(pid: u32, dll: OverlayDll, _timeout: Option<Duration>) -> anyhow::Result<()> {
+///
+/// The target's main window may not exist yet when the caller learns of the
+/// process (a game takes seconds from process start to first window). This
+/// waits for a visible top-level window for up to `timeout` (indefinitely if
+/// `None`), bailing early if the process exits meanwhile.
+pub fn inject(pid: u32, dll: OverlayDll, timeout: Option<Duration>) -> anyhow::Result<()> {
     let current = current_arch();
 
     // `SetWindowsHookEx` requires the hook DLL to match the *target* process
@@ -80,8 +91,7 @@ pub fn inject(pid: u32, dll: OverlayDll, _timeout: Option<Duration>) -> anyhow::
         .context("overlay dll is missing the `msg_hook_proc` export")?;
     let hook_proc: HOOKPROC = Some(unsafe { mem::transmute(proc) });
 
-    let thread = find_gui_thread(pid)
-        .context("cannot find a GUI thread (visible top-level window) in target process")?;
+    let thread = wait_for_gui_thread(pid, timeout)?;
 
     // Capture a strong identity (process creation time) for the target at
     // discovery time. PIDs are recycled by the OS, so the bare `pid`/`thread`
@@ -230,6 +240,52 @@ unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> BOOL 
     }
 
     BOOL(1)
+}
+
+/// Wait until `pid` owns a visible top-level window and return its thread.
+///
+/// Polls [`find_gui_thread`] every [`GUI_THREAD_POLL`] until it succeeds, the
+/// process exits, or `timeout` elapses (`None` waits indefinitely). Lets the
+/// caller attach as soon as it learns the process exists, without racing the
+/// game's own window creation.
+fn wait_for_gui_thread(pid: u32, timeout: Option<Duration>) -> anyhow::Result<u32> {
+    let deadline = timeout.map(|dur| (dur, Instant::now() + dur));
+    loop {
+        if let Some(thread) = find_gui_thread(pid) {
+            return Ok(thread);
+        }
+        if !process_is_alive(pid)? {
+            bail!("target process {pid} exited before creating a window");
+        }
+        if let Some((dur, deadline)) = deadline
+            && Instant::now() >= deadline
+        {
+            bail!(
+                "timed out after {dur:?} waiting for a GUI thread (visible top-level window) in target process {pid}"
+            );
+        }
+        sleep(GUI_THREAD_POLL);
+    }
+}
+
+/// Whether `pid` is still running. Opens the process with
+/// `PROCESS_QUERY_LIMITED_INFORMATION` only — an access level permitted even on
+/// Vanguard-protected processes. A pid that can no longer be opened is treated
+/// as gone.
+fn process_is_alive(pid: u32) -> anyhow::Result<bool> {
+    let Ok(handle) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }) else {
+        return Ok(false);
+    };
+    defer!(unsafe {
+        _ = CloseHandle(handle);
+    });
+
+    let mut exit_code = 0u32;
+    unsafe {
+        GetExitCodeProcess(handle, &mut exit_code)
+            .context("GetExitCodeProcess failed for target process")?;
+    }
+    Ok(exit_code == STILL_ACTIVE.0 as u32)
 }
 
 /// Find a thread in `pid` that owns a visible top-level window, so it pumps

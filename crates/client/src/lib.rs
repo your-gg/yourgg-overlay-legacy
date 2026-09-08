@@ -89,9 +89,11 @@ pub async fn inject(
 /// for the IPC server with [`wait_for_ipc`] (helper side) or [`connect`] (client
 /// side).
 ///
-/// NOTE: `timeout` is not enforced here — the hook install is a synchronous,
-/// uninterruptible Win32 syscall that a tokio timeout cannot cancel. Bound a
-/// wedged install at the process boundary instead (kill the helper).
+/// `timeout` bounds only the wait for the target's first visible window (a game
+/// takes seconds from process start to window creation). The hook install
+/// itself is a synchronous, uninterruptible Win32 syscall that a tokio timeout
+/// cannot cancel; bound a wedged install at the process boundary instead (kill
+/// the helper).
 pub fn install_hook(
     pid: u32,
     dll: OverlayDll<'_>,

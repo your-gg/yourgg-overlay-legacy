@@ -143,3 +143,18 @@ export enum Cursor {
   PanSouthWest,
   PanWest,
 };
+
+/**
+ * A running process, as returned by `listProcesses()`.
+ */
+export type ProcessEntry = {
+  /**
+   * Process id.
+   */
+  pid: number,
+
+  /**
+   * Executable file name without path, e.g. `League of Legends.exe`.
+   */
+  name: string,
+};

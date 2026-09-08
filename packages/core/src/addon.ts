@@ -1,8 +1,10 @@
 import { OverlayEventEmitter } from './index.js';
-import { CopyRect, Cursor, PercentLength, type GpuLuid, type UpdateSharedHandle } from './types.js';
+import { CopyRect, Cursor, PercentLength, type GpuLuid, type ProcessEntry, type UpdateSharedHandle } from './types.js';
 
 export type Addon = {
   attach(dllDir: string, pid: number, timeout?: number): Promise<unknown>,
+
+  listProcesses(): ProcessEntry[],
 
   overlaySetPosition(id: unknown, winId: number, x: PercentLength, y: PercentLength): Promise<void>,
   overlaySetAnchor(id: unknown, winId: number, x: PercentLength, y: PercentLength): Promise<void>,

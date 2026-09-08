@@ -1,5 +1,6 @@
 mod conv;
 mod overlay;
+mod process;
 mod surface;
 mod util;
 
@@ -13,5 +14,6 @@ static GLOBAL: MiMalloc = MiMalloc;
 fn main(mut cx: ModuleContext) -> NeonResult<()> {
     surface::export_module_functions(&mut cx)?;
     overlay::export_module_functions(&mut cx)?;
+    process::export_module_functions(&mut cx)?;
     Ok(())
 }

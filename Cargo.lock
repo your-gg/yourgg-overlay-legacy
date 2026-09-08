@@ -191,6 +191,7 @@ dependencies = [
  "neon",
  "num",
  "once_cell",
+ "scopeguard",
  "static_vcruntime",
  "tokio",
  "windows",

@@ -5,7 +5,7 @@ import { Addon } from './addon.js';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { CursorInput, KeyboardInput } from './input.js';
-import { PercentLength, CopyRect, Cursor, type UpdateSharedHandle, type GpuLuid } from './types.js';
+import { PercentLength, CopyRect, Cursor, type UpdateSharedHandle, type GpuLuid, type ProcessEntry } from './types.js';
 
 export * from './types.js';
 export * from './util.js';
@@ -330,6 +330,15 @@ export class OverlaySurface {
   static create(luid: GpuLuid): OverlaySurface {
     return new OverlaySurface(addon.surfaceCreate(luid));
   }
+}
+
+/**
+ * Snapshot every running process (pid and executable name) without spawning a
+ * shell or `tasklist.exe`. Backed by a Toolhelp32 snapshot, so it costs about a
+ * millisecond and needs no handle to any process.
+ */
+export function listProcesses(): ProcessEntry[] {
+  return addon.listProcesses();
 }
 
 /**

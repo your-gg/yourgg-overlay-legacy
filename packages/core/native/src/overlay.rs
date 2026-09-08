@@ -25,6 +25,14 @@ use tokio::sync::Mutex;
 /// timeout instead of blocking indefinitely.
 const IPC_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How much earlier than our own attach timeout the injector helper is told to
+/// give up, so its specific error reaches us before we kill it.
+const HELPER_TIMEOUT_MARGIN: Duration = Duration::from_millis(500);
+
+/// Never hand the helper a deadline shorter than this, even for tiny attach
+/// timeouts.
+const HELPER_TIMEOUT_MIN: Duration = Duration::from_millis(500);
+
 struct Overlay(RefCell<Option<Inner>>);
 
 impl Overlay {
@@ -124,9 +132,19 @@ async fn attach_via_helper(
     // Run the (slow-under-anti-cheat) SetWindowsHookExW in the helper, out of
     // this process. Capture stderr so the helper's failure cause reaches us;
     // kill_on_drop so a cancelled/timed-out attach can't leak the child.
-    let child = tokio::process::Command::new(&helper)
-        .arg(pid.to_string())
-        .arg(&dll)
+    // Hand the helper a slightly shorter deadline than ours so its own, precise
+    // failure cause (e.g. "timed out waiting for a GUI thread") reaches us
+    // before the process-boundary kill below fires.
+    let helper_timeout = timeout.map(|dur| {
+        dur.saturating_sub(HELPER_TIMEOUT_MARGIN)
+            .max(HELPER_TIMEOUT_MIN)
+    });
+    let mut command = tokio::process::Command::new(&helper);
+    command.arg(pid.to_string()).arg(&dll);
+    if let Some(dur) = helper_timeout {
+        command.arg(dur.as_millis().to_string());
+    }
+    let child = command
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())

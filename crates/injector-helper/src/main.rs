@@ -11,17 +11,23 @@
 //! seconds; from a small dedicated, code-signed exe it is near-instant. The
 //! helper must be the SAME architecture as the target process.
 //!
-//! Usage:  injector-helper <pid> <dll-path>
+//! Usage:  injector-helper <pid> <dll-path> [timeout-ms]
 //! Exit:   0 = hook installed and the overlay's IPC server is up
 //!         1 = bad args / install failed / timed out (cause written to stderr)
+//!
+//! `timeout-ms` bounds both the wait for the target's first visible window and
+//! the wait for the IPC server (default 60000). The parent passes its own attach
+//! timeout here so a slow game start fails with a precise cause ("timed out
+//! waiting for a GUI thread") instead of the parent having to kill this process.
 
 use std::{env, path::PathBuf, process::ExitCode, time::Duration};
 
 use anyhow::Context;
 use asdf_overlay_client::{OverlayDll, install_hook, wait_for_ipc};
 
-/// Upper bound for the IPC-server wait after the hook is installed.
-const TIMEOUT: Duration = Duration::from_secs(60);
+/// Default upper bound for the window wait and the IPC-server wait when the
+/// parent does not pass one.
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -46,6 +52,10 @@ async fn run() -> anyhow::Result<()> {
         args.next()
             .context("usage: injector-helper <pid> <dll-path>")?,
     );
+    let timeout = match args.next() {
+        Some(ms) => Duration::from_millis(ms.parse().context("invalid timeout-ms")?),
+        None => DEFAULT_TIMEOUT,
+    };
 
     // Same path in every arch slot: install_hook reads only the slot matching
     // THIS helper's architecture, and the caller spawns the helper whose arch
@@ -57,10 +67,10 @@ async fn run() -> anyhow::Result<()> {
             x86: Some(&dll_path),
             arm64: Some(&dll_path),
         },
-        Some(TIMEOUT),
+        Some(timeout),
     )?;
 
     // Block until the DLL has mapped, pinned itself, and started its IPC server,
     // so the overlay survives this process exiting (which removes the hook).
-    wait_for_ipc(pid, Some(TIMEOUT)).await
+    wait_for_ipc(pid, Some(timeout)).await
 }

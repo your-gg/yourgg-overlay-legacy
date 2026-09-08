@@ -81,10 +81,55 @@ a context-isolated preload.
 - With electron-builder, include
   `node_modules/@your-gg/yourgg-core/**/*.{node,dll,exe}` in `asarUnpack`.
 
+### Event-driven attach
+
+The manager scans running processes once on `start()` and afterwards only when
+the host calls `scan()`. When the host already talks to the League client (for
+example through `@your-gg/league-connect`), call `scan()` from the LCU
+gameflow event. The manager then does nothing while idle and looks for the
+game process only when a game actually starts.
+
+```typescript
+import { createWebSocketConnection } from '@your-gg/league-connect';
+import { startGameOverlay } from '@your-gg/yourgg-overlay';
+
+const overlays = await startGameOverlay('league', {
+  url: 'app://overlay/league',
+});
+
+const ws = await createWebSocketConnection({
+  authenticationOptions: { awaitConnection: true },
+});
+ws.subscribe('/lol-gameflow/v1/gameflow-phase', (phase) => {
+  if (phase === 'InProgress') {
+    void overlays.scan();
+  }
+});
+```
+
+The game window may not exist yet right after `InProgress`. The injector waits
+up to `attachTimeout` (default 10 s) for the first visible window before
+installing the hook, so the host does not need its own retry loop. Game exit is
+detected without scanning: the overlay IPC disconnects and `detached` fires.
+
+Hosts without such a signal can opt into polling with an explicit interval,
+e.g. `scanIntervalMs: 3000`; the example app does this.
+
+Process discovery uses the core addon's `listProcesses()` (a Toolhelp32
+snapshot, no process spawn). A failure to load the addon surfaces through the
+manager's `error` event rather than being hidden: the same addon is required
+for `Overlay.attach`, so it indicates a packaging problem. The `tasklist.exe`
+based `listProcessesViaTasklist` is only used when passed explicitly as
+`processProvider`.
+
 ### Riot Vanguard
 
-This backend injects a rendering DLL into the target process. Repository testing
-has already observed Riot Vanguard account enforcement even with a signed DLL.
-There is no allow-list path for this technique. Treat this backend as explicit
-R&D opt-in, not a production-safe Riot integration; a production release should
-use a separate topmost window and supported Riot APIs instead.
+This backend injects a rendering DLL into the target process. For League of
+Legends this runs under an arrangement agreed with Riot; ship only the
+CI-signed DLL, injector helper, and addon, never a locally built unsigned
+binary.
+
+Do not include VALORANT in `games` until its approval scope is confirmed
+separately. VALORANT exposes no local API for round state, so there is no safe
+moment to block game input with `setInteractive(true)`; if supported at all,
+keep the VALORANT overlay display-only.

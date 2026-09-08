@@ -194,13 +194,53 @@ export default defineConfig({
 라이브러리가 런타임 경로의 `app.asar`를 `app.asar.unpacked`로 보정하지만,
 실제 파일을 unpack하는 작업은 앱 패키저 설정이 담당한다.
 
+### 게임 시작 신호로 attach하기
+
+매니저는 `start()` 시 한 번만 프로세스를 확인하고, 그 뒤로는 앱이 `scan()`을
+호출할 때만 다시 확인한다. 기존 앱이 `@your-gg/league-connect`로 LCU에 붙어
+있다면 gameflow 이벤트에서 `scan()`을 호출한다. 유휴 상태에서는 아무 작업도
+하지 않고, 게임이 뜨는 순간에만 프로세스를 찾는다.
+
+```typescript
+import { createWebSocketConnection } from '@your-gg/league-connect';
+import { startGameOverlay } from '@your-gg/yourgg-overlay';
+
+const overlays = await startGameOverlay('league', {
+  url: 'app://overlay/league',
+});
+
+const ws = await createWebSocketConnection({
+  authenticationOptions: { awaitConnection: true },
+});
+ws.subscribe('/lol-gameflow/v1/gameflow-phase', (phase) => {
+  if (phase === 'InProgress') {
+    void overlays.scan();
+  }
+});
+```
+
+`InProgress` 직후에는 게임 창이 아직 없을 수 있다. 인젝터가 `attachTimeout`
+(기본 10초) 동안 창이 생기기를 기다렸다가 훅을 걸므로 앱에서 재시도할 필요는
+없다. 게임 종료는 스캔 없이 IPC 끊김으로 감지되어 `detached`가 발생한다.
+
+LCU 같은 신호가 없는 환경에서는 `scanIntervalMs: 3000`처럼 폴링 간격을 명시해
+매니저가 주기적으로 확인하게 할 수 있다. 예제 앱이 이 방식이다.
+
+프로세스 목록은 core addon의 `listProcesses()`(Toolhelp32 스냅샷, 프로세스
+spawn 없음)로 읽는다. addon 로드 실패는 `error` 이벤트로 그대로 올라오며, 이는
+`Overlay.attach`도 실패하는 패키징 문제이므로 숨기지 않는다. `tasklist.exe`
+기반 `listProcessesViaTasklist`는 `processProvider`로 명시적으로 넘길 때만 쓰인다.
+
 ### 운영 주의사항
 
-현재 backend는 대상 게임 프로세스에 렌더링 DLL을 주입한다. 저장소 테스트에서
-서명된 DLL도 Riot Vanguard의 계정 제재를 받은 이력이 있으며 공식 allow-list
-경로가 없다. Riot 게임의 프로덕션 배포에는 안전한 방식이 아니다. 실제 사용자
-배포본은 외부 topmost 투명창과 Riot 지원 API 기반 backend로 교체하는 것을
-권장한다.
+이 backend는 대상 게임 프로세스에 렌더링 DLL을 주입한다. 롤에 대해서는 Riot과
+협의된 경로로 운영 중이며, 배포본에는 CI에서 서명된 DLL·injector helper·addon만
+포함해야 한다. 로컬에서 빌드한 미서명 바이너리를 사용자에게 배포하지 않는다.
+
+VALORANT는 승인 범위가 별도로 확인되기 전까지 `games`에 포함하지 않는다.
+VALORANT에는 라운드 상태를 알려주는 로컬 API가 없어 `setInteractive(true)`로
+게임 입력을 막을 안전한 시점을 판단할 수 없으므로, 지원하더라도 정보 표시
+전용으로 둔다.
 
 ## Used by
 [lyrs-url]: https://github.com/organization/lyrs

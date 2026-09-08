@@ -11,7 +11,6 @@ import type {
 } from './types.js';
 
 const GAME_IDS = ['valorant', 'league'] as const;
-const DEFAULT_SCAN_INTERVAL = 3_000;
 
 const defaultSessionFactory: GameOverlaySessionFactory = async (
   game,
@@ -47,7 +46,7 @@ export class GameOverlayManager {
       /app\.asar(?=[\\/])/,
       'app.asar.unpacked',
     );
-    this.scanIntervalMs = options.scanIntervalMs ?? DEFAULT_SCAN_INTERVAL;
+    this.scanIntervalMs = options.scanIntervalMs ?? 0;
   }
 
   getSession(game: GameId): GameOverlaySession | undefined {
@@ -135,7 +134,9 @@ export class GameOverlayManager {
   }
 
   private scheduleScan(): void {
-    if (this.stopped) {
+    // Periodic scanning is opt-in. By default the host drives `scan()` from
+    // its own signal (e.g. the LCU gameflow phase) instead of polling.
+    if (this.stopped || this.scanIntervalMs <= 0) {
       return;
     }
     this.timer = setInterval(() => {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import { GameOverlayManager } from '../lib/game-overlay/manager.js';
 import { parseTasklist } from '../lib/game-overlay/processes.js';
 
@@ -110,4 +110,64 @@ void test('stop prevents a pending scan from attaching later', async () => {
   await starting;
 
   assert.equal(attachCount, 0);
+});
+
+void test('periodic scanning is off by default', async () => {
+  mock.timers.enable({ apis: ['setInterval'] });
+  try {
+    let scans = 0;
+    const manager = new GameOverlayManager({
+      games: {
+        league: { url: 'https://example.test/league' },
+      },
+      dllDir: 'C:\\overlay',
+      processProvider: () => {
+        scans += 1;
+        return Promise.resolve([]);
+      },
+      sessionFactory: () => Promise.reject(new Error('no process, must not attach')),
+    });
+
+    await manager.start();
+    assert.equal(scans, 1, 'start() performs one immediate scan');
+
+    mock.timers.tick(60_000);
+    assert.equal(scans, 1, 'no timer-driven scans');
+
+    await manager.scan();
+    assert.equal(scans, 2, 'external scan() still works');
+
+    await manager.stop();
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+void test('positive scanIntervalMs keeps periodic scanning', async () => {
+  mock.timers.enable({ apis: ['setInterval'] });
+  try {
+    let scans = 0;
+    const manager = new GameOverlayManager({
+      games: {
+        league: { url: 'https://example.test/league' },
+      },
+      dllDir: 'C:\\overlay',
+      scanIntervalMs: 1_000,
+      processProvider: () => {
+        scans += 1;
+        return Promise.resolve([]);
+      },
+      sessionFactory: () => Promise.reject(new Error('no process, must not attach')),
+    });
+
+    await manager.start();
+    assert.equal(scans, 1);
+
+    mock.timers.tick(3_000);
+    assert.equal(scans, 4, 'one scan per interval');
+
+    await manager.stop();
+  } finally {
+    mock.timers.reset();
+  }
 });

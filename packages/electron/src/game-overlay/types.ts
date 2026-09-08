@@ -69,6 +69,15 @@ export type GameOverlaySessionFactory = (
 
 export type GameOverlayManagerOptions = {
   games: Partial<Record<GameId, GameOverlayOptions>>,
+  /**
+   * Opt-in periodic re-scan of running processes, in milliseconds.
+   *
+   * Unset (or `0`) means the manager never polls: it scans once on `start()`
+   * and afterwards only when the host calls `GameOverlayManager.scan()`, e.g.
+   * on the LCU `/lol-gameflow/v1/gameflow-phase` event reaching `InProgress`.
+   * Set e.g. `3000` to poll instead, for hosts without such a signal. Game exit
+   * is detected either way through the overlay IPC disconnecting.
+   */
   scanIntervalMs?: number,
   dllDir?: string,
   processProvider?: GameProcessProvider,

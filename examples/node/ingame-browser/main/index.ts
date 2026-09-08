@@ -26,7 +26,8 @@ async function main() {
     games.league = overlayPage;
   }
 
-  const manager = await startGameOverlays({ games });
+  // No LCU signal in this demo, so poll for the game processes.
+  const manager = await startGameOverlays({ games, scanIntervalMs: 3_000 });
   manager.events.on('attached', ({ game, process }) => {
     console.log(`Attached ${game} overlay to PID ${String(process.pid)}`);
   });

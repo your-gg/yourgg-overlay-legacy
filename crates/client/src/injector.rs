@@ -41,7 +41,7 @@ use windows::{
     core::{BOOL, PCWSTR, s},
 };
 
-use crate::OverlayDll;
+use crate::{OverlayDll, signature::verify_signed};
 
 /// How often to re-check for the target's GUI thread while waiting for its
 /// window to appear.
@@ -79,6 +79,11 @@ pub fn inject(pid: u32, dll: OverlayDll, timeout: Option<Duration>) -> anyhow::R
         IMAGE_FILE_MACHINE_I386 => dll.x86.context("x86 dll path is not provided")?,
         arch => bail!("Unsupported injector arch: {}", arch.0),
     };
+
+    // Refuse to go near a Riot process with a binary our CI did not sign. A
+    // locally built DLL injected into a live game risks account enforcement for
+    // whoever is logged in.
+    verify_signed(dll_path)?;
 
     // Load the overlay DLL into the injector process to obtain the hook proc.
     // It does NOT start an overlay here — it only initializes when its hook proc

@@ -31,6 +31,7 @@
 
 pub mod client;
 mod injector;
+pub mod signature;
 #[cfg(feature = "surface")]
 pub mod surface;
 #[cfg(feature = "surface")]

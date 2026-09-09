@@ -7,6 +7,7 @@ use super::conv::{deserialize_percent_length, emit_event};
 use super::util::with_rt;
 use crate::{conv::deserialize_handle_update, util::runtime};
 use anyhow::{Context as AnyhowContext, bail};
+use asdf_overlay_client::signature::verify_signed;
 use asdf_overlay_client::{
     client::{IpcClientConn, IpcClientEventStream},
     common::{
@@ -32,6 +33,10 @@ const HELPER_TIMEOUT_MARGIN: Duration = Duration::from_millis(500);
 /// Never hand the helper a deadline shorter than this, even for tiny attach
 /// timeouts.
 const HELPER_TIMEOUT_MIN: Duration = Duration::from_millis(500);
+
+/// Upper bound on how much of the helper's stderr is folded into the JS error,
+/// so a runaway child cannot push an unbounded string into a crash report.
+const HELPER_STDERR_LIMIT: usize = 4096;
 
 struct Overlay(RefCell<Option<Inner>>);
 
@@ -129,6 +134,10 @@ async fn attach_via_helper(
         );
     }
 
+    // The helper is what actually touches the game, so verify it here before
+    // handing it a target pid. It verifies the DLL in turn.
+    verify_signed(&helper)?;
+
     // Run the (slow-under-anti-cheat) SetWindowsHookExW in the helper, out of
     // this process. Capture stderr so the helper's failure cause reaches us;
     // kill_on_drop so a cancelled/timed-out attach can't leak the child.
@@ -166,8 +175,17 @@ async fn attach_via_helper(
             .context("failed to wait for injector helper")?,
     };
     if !output.status.success() {
+        // Forward the helper's whole error chain, not just its last line: this
+        // string is the only diagnostic that reaches the host app's Sentry, and
+        // the outer context ("failed to inject overlay DLL") is what tells a
+        // reader which stage failed.
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let detail = stderr.lines().last().unwrap_or("(no stderr)").trim();
+        let mut detail = stderr.trim();
+        if detail.is_empty() {
+            detail = "(no stderr)";
+        } else if detail.len() > HELPER_STDERR_LIMIT {
+            detail = &detail[..HELPER_STDERR_LIMIT];
+        }
         bail!("injector helper failed ({}): {detail}", output.status);
     }
 

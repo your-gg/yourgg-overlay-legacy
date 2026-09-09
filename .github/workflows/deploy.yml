@@ -109,9 +109,14 @@ jobs:
       # PDB in one invocation (required to associate the debug identifier).
       # MUST target the SAME Sentry project the consuming app's @sentry/electron
       # sends crashes to, or they won't resolve.
+      # A build whose symbols are not in Sentry cannot be debugged: native
+      # crashes come back as bare addresses. Such a build is not worth shipping,
+      # so this step is allowed to fail the job. It runs BEFORE signing and the
+      # artifact uploads, so a failure here means no signed artifact and no npm
+      # publish. Do not reorder, and do not re-add continue-on-error.
       - name: Upload debug files (PDB) to Sentry
+        id: sentry-debug-files
         if: ${{ inputs.sign }}
-        continue-on-error: true
         shell: bash
         run: |
           if [ -z "$SENTRY_AUTH_TOKEN" ]; then
@@ -127,8 +132,13 @@ jobs:
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
 
+      # Unsigned binaries are published ONLY when this run does not sign. An
+      # unsigned DLL must never be injected into a Riot game (the injector also
+      # refuses to load one), so a signing run leaves exactly one artifact and
+      # it is the signed one. Nobody can grab the wrong download by mistake.
       - name: Upload unsigned artifact
         id: upload-unsigned-artifact
+        if: ${{ !inputs.sign }}
         uses: actions/upload-artifact@v4
         with:
           name: 'yourgg-overlay-artifact-unsigned-${{ steps.commit-sha.outputs.short_sha }}'
@@ -140,13 +150,18 @@ jobs:
             packages/core/yourgg_overlay-x64.dll
             packages/core/yourgg-injector-x64.exe
 
-      - name: Download unsigned artifact for signing
+      - name: Stage binaries for signing
         if: ${{ inputs.sign }}
-        uses: actions/download-artifact@v4
-        with:
-          artifact-ids: ${{ steps.upload-unsigned-artifact.outputs.artifact-id }}
-          path: 'target/unsigned'
-          merge-multiple: true
+        shell: bash
+        run: |
+          mkdir -p target/unsigned
+          cp packages/core/addon-aarch64.node \
+             packages/core/addon-x64.node \
+             packages/core/yourgg_overlay-aarch64.dll \
+             packages/core/yourgg_overlay-x86.dll \
+             packages/core/yourgg_overlay-x64.dll \
+             packages/core/yourgg-injector-x64.exe \
+             target/unsigned/
 
       - name: Sign artifacts
         if: ${{ inputs.sign }}

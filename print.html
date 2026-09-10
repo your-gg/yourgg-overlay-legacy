@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1671ba33.js";
+            window.path_to_searchindex_js = "searchindex-737ac93b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-3fdea94f.js"></script>
@@ -334,12 +334,68 @@ but the packager must still copy those files there.</li>
 <li>With electron-builder, include
 <code>node_modules/@your-gg/yourgg-core/**/*.{node,dll,exe}</code> in <code>asarUnpack</code>.</li>
 </ul>
+<h3 id="targeting-other-executables"><a class="header" href="#targeting-other-executables">Targeting other executables</a></h3>
+<p>Keys in <code>games</code> are arbitrary strings. <code>league</code> and <code>valorant</code> carry built-in
+executable names; any other key must supply <code>executable</code> or <code>match</code>. Use
+<code>match</code> when the executable name is ambiguous, e.g. the live and tournament
+League clients share <code>League of Legends.exe</code> and differ only by install path
+(<code>GameProcess.path</code>).</p>
+<pre><code class="language-typescript">const overlays = await startGameOverlays({
+  games: {
+    league: {
+      url: 'app://overlay/league',
+      match: p =&gt; p.name === 'League of Legends.exe' &amp;&amp; !p.path?.includes('loltmnt'),
+    },
+    other: { url: 'app://overlay/other', executable: 'OtherGame.exe' },
+  },
+});
+</code></pre>
+<p>Teamfight Tactics runs inside the same <code>League of Legends.exe</code>, so it needs no
+entry of its own: the <code>league</code> session attaches, and the overlay page decides
+which UI to show from the game mode reported by the LCU or Live Client Data.</p>
+<h3 id="event-driven-attach"><a class="header" href="#event-driven-attach">Event-driven attach</a></h3>
+<p>The manager scans running processes once on <code>start()</code> and afterwards only when
+the host calls <code>scan()</code>. When the host already talks to the League client (for
+example through <code>@your-gg/league-connect</code>), call <code>scan()</code> from the LCU
+gameflow event. The manager then does nothing while idle and looks for the
+game process only when a game actually starts.</p>
+<pre><code class="language-typescript">import { createWebSocketConnection } from '@your-gg/league-connect';
+import { startGameOverlay } from '@your-gg/yourgg-overlay';
+
+const overlays = await startGameOverlay('league', {
+  url: 'app://overlay/league',
+});
+
+const ws = await createWebSocketConnection({
+  authenticationOptions: { awaitConnection: true },
+});
+ws.subscribe('/lol-gameflow/v1/gameflow-phase', (phase) =&gt; {
+  if (phase === 'InProgress') {
+    void overlays.scan();
+  }
+});
+</code></pre>
+<p>The game window may not exist yet right after <code>InProgress</code>. The injector waits
+up to <code>attachTimeout</code> (default 10 s) for the first visible window before
+installing the hook, so the host does not need its own retry loop. Game exit is
+detected without scanning: the overlay IPC disconnects and <code>detached</code> fires.</p>
+<p>Hosts without such a signal can opt into polling with an explicit interval,
+e.g. <code>scanIntervalMs: 3000</code>; the example app does this.</p>
+<p>Process discovery uses the core addon’s <code>listProcesses()</code> (a Toolhelp32
+snapshot, no process spawn). A failure to load the addon surfaces through the
+manager’s <code>error</code> event rather than being hidden: the same addon is required
+for <code>Overlay.attach</code>, so it indicates a packaging problem. The <code>tasklist.exe</code>
+based <code>listProcessesViaTasklist</code> is only used when passed explicitly as
+<code>processProvider</code>.</p>
 <h3 id="riot-vanguard"><a class="header" href="#riot-vanguard">Riot Vanguard</a></h3>
-<p>This backend injects a rendering DLL into the target process. Repository testing
-has already observed Riot Vanguard account enforcement even with a signed DLL.
-There is no allow-list path for this technique. Treat this backend as explicit
-R&amp;D opt-in, not a production-safe Riot integration; a production release should
-use a separate topmost window and supported Riot APIs instead.</p>
+<p>This backend injects a rendering DLL into the target process. For League of
+Legends this runs under an arrangement agreed with Riot; ship only the
+CI-signed DLL, injector helper, and addon, never a locally built unsigned
+binary.</p>
+<p>Do not include VALORANT in <code>games</code> until its approval scope is confirmed
+separately. VALORANT exposes no local API for round state, so there is no safe
+moment to block game input with <code>setInteractive(true)</code>; if supported at all,
+keep the VALORANT overlay display-only.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="closing-the-connection"><a class="header" href="#closing-the-connection">Closing the connection</a></h1>
 <p>After opening a connection to Asdf Overlay, it is important to close the connection properly to free up resources.

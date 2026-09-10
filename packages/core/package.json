@@ -1,6 +1,6 @@
 {
   "name": "@your-gg/yourgg-core",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "description": "YOUR.GG overlay core Node addon",
   "main": "./lib/index.js",
   "type": "module",
